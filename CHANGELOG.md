@@ -8,12 +8,12 @@ as a Claude Code plugin. v2 lives only on an upstream development *branch* (`v2-
 upstream tags, so releases here are independent `2.0.0-alpha.N` builds. Each release records the exact
 upstream commit it was built from in `UPSTREAM.lock` and in the release tag (`vX.Y.Z+up.<short-sha>`).
 
-## [Unreleased]
+## [2.0.0-alpha.1] - 2026-06-07
 
-Initial (unreleased) port of AI-DLC v2 to a Claude Code plugin. Not yet published. Once the first
-public release is cut, the entries below become its `## [2.0.0-alpha.1]` section, and this file
-switches to tracking changes *between* released versions (primarily: which upstream snapshot was
-adopted, and any change to the Claude adapter).
+First public alpha — the initial port of AI-DLC v2 to a Claude Code plugin, built from upstream
+`awslabs/aidlc-workflows@392d576` (branch `v2-evaluator`). Future entries track changes *between*
+released versions (primarily: which upstream snapshot was adopted, and any change to the Claude
+adapter).
 
 ### Plugin (what installs as `aidlc-v2`)
 - An orchestrator-driven AI-DLC v2 workflow: the `aidlc-orchestrator` skill composes and runs an
