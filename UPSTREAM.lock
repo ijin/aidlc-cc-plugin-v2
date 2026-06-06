@@ -1,0 +1,16 @@
+# Upstream pin for vendored src/
+#
+# src/ is a snapshot of the `src/` directory of awslabs/aidlc-workflows at the
+# commit below. This file is the single source of truth for "what upstream are
+# we on". targets/claude/sync-upstream.sh reads and rewrites it; do not edit the
+# SHA by hand — run the sync script.
+#
+# Format: KEY=VALUE, one per line.
+
+UPSTREAM_REPO=https://github.com/awslabs/aidlc-workflows.git
+UPSTREAM_BRANCH=v2-evaluator
+UPSTREAM_SHA=392d576d32a8a1abe19ef12838785506ed77242b
+UPSTREAM_SUBDIR=src
+UPSTREAM_SRC_TREE_HASH=83e3130a76b2e6072a36aa2051da9b0a185c2726
+UPSTREAM_DATE=2026-06-03
+SYNCED_NOTE=Initial vendor: full-branch tip of v2-evaluator (subdir src/).

@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build plugin
+        run: node targets/claude/build.mjs build
+        env:
+          AIDLC_REQUIRE_CLAUDE_VALIDATE: "0"
+
+      - name: Verify gates (drift contract, T1 triage, T3 scorer, dist freshness)
+        run: npm test

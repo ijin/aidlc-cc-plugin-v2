@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# pre-commit — refuse a commit that would ship a STALE dist/claude.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+#
+# Only runs the (cheap) freshness check when something that feeds the build is
+# staged (src/, targets/, or dist/ itself) — so unrelated commits aren't slowed.
+# Bypass in a genuine emergency with:  git commit --no-verify
+
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+
+staged="$(git diff --cached --name-only)"
+if ! printf '%s\n' "$staged" | grep -qE '^(src/|targets/|dist/)'; then
+  exit 0  # nothing build-relevant staged
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node not found — skipping dist-freshness check" >&2
+  exit 0
+fi
+
+echo "pre-commit: verifying committed dist/claude matches a fresh build of src/ ..."
+if ! node "$ROOT/test/dist-fresh.mjs"; then
+  echo "" >&2
+  echo "pre-commit: BLOCKED — dist/claude is stale. Rebuild and stage it:" >&2
+  echo "    node targets/claude/build.mjs && git add dist/" >&2
+  echo "  (or 'git commit --no-verify' to bypass intentionally)" >&2
+  exit 1
+fi

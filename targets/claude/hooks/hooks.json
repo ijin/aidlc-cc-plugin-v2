@@ -1,0 +1,16 @@
+{
+  "description": "AI-DLC v2 process-gate reminder. After an AI-DLC builder or validator subagent finishes, reminds the orchestrator to run process_checker before advancing.",
+  "hooks": {
+    "SubagentStop": [
+      {
+        "matcher": "aidlc-builder-agent|aidlc-validator-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/process-check-reminder.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

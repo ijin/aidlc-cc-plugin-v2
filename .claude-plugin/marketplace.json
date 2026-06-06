@@ -1,0 +1,40 @@
+{
+  "name": "aidlc-cc-plugin-v2",
+  "owner": {
+    "name": "ijin"
+  },
+  "metadata": {
+    "description": "AI-DLC v2 (alpha) - agent-orchestrated AI-Driven Development Lifecycle for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "aidlc-v2",
+      "source": "./dist/claude",
+      "description": "AI-DLC v2 (alpha) - agent-orchestrated AI-Driven Development Lifecycle. Ported from awslabs/aidlc-workflows v2; installs alongside the stable v1 plugin.",
+      "version": "2.0.0-alpha.1",
+      "author": {
+        "name": "ijin"
+      },
+      "homepage": "https://github.com/ijin/aidlc-cc-plugin-v2",
+      "repository": "https://github.com/ijin/aidlc-cc-plugin-v2",
+      "license": "MIT-0",
+      "keywords": [
+        "aidlc",
+        "ai-driven",
+        "development-lifecycle",
+        "claude-code",
+        "plugin",
+        "v2",
+        "alpha"
+      ],
+      "category": "methodology",
+      "tags": [
+        "aidlc",
+        "ai-driven",
+        "workflow",
+        "agent-orchestration"
+      ],
+      "strict": true
+    }
+  ]
+}

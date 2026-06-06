@@ -1,0 +1,13 @@
+# Local working clone of upstream (used by sync tooling; never shipped)
+/aidlc-workflows/
+
+# Local, environment-specific agent notes (machine workflow — never public).
+# Portable repo rules live in the committed CLAUDE.md.
+CLAUDE.local.md
+
+# OS / editor cruft
+.DS_Store
+*.swp
+
+# Node
+node_modules/
