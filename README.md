@@ -9,16 +9,6 @@ adaptive, agent-orchestrated software development lifecycle.
 > separate namespace (`aidlc-v2`) so it can be installed **alongside** the stable v1 plugin
 > ([`ijin/aidlc-cc-plugin`](https://github.com/ijin/aidlc-cc-plugin)) for testing.
 
-## How this relates to v1
-
-| | v1 (`aidlc`) | v2 (`aidlc-v2`, this repo) |
-|---|---|---|
-| Upstream source | `aidlc-rules/*.md`, by tag | `src/{agents,aidlc-common,skills}`, by branch |
-| Runtime shape | one `/aidlc:start` skill | orchestrator + ~15 composable skills + builder/validator agents |
-| Entry point | `/aidlc:start` | `/aidlc-v2:aidlc-orchestrator` (or a free-form dev intent) |
-
-Both can be installed at once — Claude Code namespaces skills by plugin `name`.
-
 ## Architecture of this repo
 
 ```
@@ -60,6 +50,16 @@ Then start a workflow with a development intent, or invoke the orchestrator expl
 ```
 /aidlc-v2:aidlc-orchestrator Build a URL shortener service
 ```
+
+## How this relates to v1
+
+| | v1 (`aidlc`) | v2 (`aidlc-v2`, this repo) |
+|---|---|---|
+| Upstream source | `aidlc-rules/*.md`, by tag | `src/{agents,aidlc-common,skills}`, by branch |
+| Runtime shape | one `/aidlc:start` skill | orchestrator + ~15 composable skills + builder/validator agents |
+| Entry point | `/aidlc:start` | `/aidlc-v2:aidlc-orchestrator` (or a free-form dev intent) |
+
+Both can be installed at once — Claude Code namespaces skills by plugin `name`.
 
 ## Syncing from upstream
 
