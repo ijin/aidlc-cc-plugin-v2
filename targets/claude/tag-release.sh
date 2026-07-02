@@ -66,7 +66,9 @@ TAG="v${VERSION}+up.${SHORT_SHA}"
 # Provenance integrity: the COMMITTED src/ must actually equal the lock's tree
 # hash. Otherwise a bad committed lock would mint a tag asserting false
 # provenance. HEAD:src is the committed release tree — compare it to the lock.
-COMMITTED_SRC="$(git -C "$ROOT" rev-parse "HEAD:$( [ -n "$(get UPSTREAM_SUBDIR)" ] && get UPSTREAM_SUBDIR || echo src )" 2>/dev/null)" ||
+# (Always HEAD:src — the LOCAL vendor dir is fixed at src/; UPSTREAM_SUBDIR is
+# the path inside UPSTREAM's repo and no longer coincides with it.)
+COMMITTED_SRC="$(git -C "$ROOT" rev-parse "HEAD:src" 2>/dev/null)" ||
   die "could not resolve HEAD:src — is src/ committed?"
 [ "$COMMITTED_SRC" = "$TREE_HASH" ] ||
   die "committed src/ tree ($COMMITTED_SRC) != UPSTREAM.lock UPSTREAM_SRC_TREE_HASH ($TREE_HASH). The lock and the committed source disagree — re-run sync-upstream.sh and commit before tagging."

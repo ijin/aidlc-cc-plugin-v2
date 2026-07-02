@@ -7,129 +7,139 @@ is its header comment + `.design/`.
 
 ## The build model
 
-`src/` is a pristine, vendored mirror of upstream's `src/` at the SHA in `UPSTREAM.lock`. The plugin
-that ships is the **built** `dist/claude/`, produced by `targets/claude/build.mjs`. All Claude-specific
-adaptation lives in `targets/claude/`; **never hand-edit `src/` or `dist/`** (rebuild instead).
-`dist/` is committed and must always equal a fresh build of `src/` — enforced by the freshness guard
-(below), a pre-commit hook (`git config core.hooksPath .githooks`), and CI.
+`src/` is a pristine, vendored mirror of **upstream's built `dist/claude`** (its own Claude Code
+target: `.claude/` framework + `.mcp.json` + `.gitignore` + seed `aidlc/` workspace) at the SHA in
+`UPSTREAM.lock` — normally a `v2.x` release-tag commit on upstream's `v2` branch. The plugin that
+ships is the **built** `dist/claude/`, produced by `targets/claude/build.mjs`:
+
+- `dist/claude/framework/` — `src/` **verbatim** (postcondition-asserted byte-identical);
+- `dist/claude/skills/aidlc/` + `dist/claude/installer/` — the authored surface
+  (`targets/claude/plugin/`): the `/aidlc-v2:aidlc` entry skill and the bun installer;
+- `dist/claude/.claude-plugin/plugin.json` — generated from `package.json`.
+
+This is the **installer model**: upstream's engine requires living at `<project>/.claude/` (its
+hooks/tools join framework paths under the project dir; its `doctor` prescribes the copy), so we
+ship it untouched and install it, rather than patching it to run in place. All plugin-specific
+engineering lives in `targets/claude/`; **never hand-edit `src/` or `dist/`** (rebuild instead).
+`dist/` is committed and must always equal a fresh build — enforced by the freshness guard, a
+pre-commit hook (`git config core.hooksPath .githooks`), and CI.
 
 ## Syncing from upstream (the full pipeline)
 
-The README has the short version; the steps and their guards:
-
 ```bash
-./targets/claude/sync-upstream.sh <upstream-sha>   # or bare for the v2-evaluator tip
+# find the newest upstream release tag and its peeled commit:
+git ls-remote https://github.com/awslabs/aidlc-workflows.git 'refs/tags/v2.*'
+./targets/claude/sync-upstream.sh <peeled-tag-commit-sha>
 ```
 
-This runs **T1 diff-triage**, sparse-checkouts upstream `src/` at the SHA, replaces local `src/`,
-rebuilds `dist/`, runs the **build contract (T0)**, and rewrites `UPSTREAM.lock` **only on a clean
-build**. It does **not** commit. Then: review, bump the version, commit, tag.
+This runs **T1 diff-triage**, sparse-checkouts upstream `dist/claude` at the SHA, replaces local
+`src/`, rebuilds `dist/`, runs the **build contract (T0)**, and rewrites `UPSTREAM.lock` **only on
+a clean build**. It does **not** commit. Then: review, set the version (mirror upstream's), commit,
+tag. Stage with **`git add --force -A src`** — the vendored `src/.gitignore` matches files upstream
+ships force-added (e.g. `aidlc/active-space`); a plain `git add` silently drops them on first sync
+(the sync script prints the affected files; `tag-release.sh` catches the resulting skew at release).
 
-> **Never `git subtree pull`.** `src/` was originally imported via subtree; that command maps
-> upstream's *repo root* into `src/` and corrupts it. Always use `sync-upstream.sh`.
+> Pin **tag commits**, not the `v2` branch tip: the tip is unreleased and upstream has force-pushed
+> the branch before. `main` is the v1 line — v2 may never merge there.
 
 ### T1 — diff triage
 
-`sync-triage.mjs` classifies every changed file before adoption:
+`sync-triage.mjs` classifies every changed file before adoption. Under the installer model the
+payload ships byte-identical, so there is no transform whose coverage T1 must prove; its value is
+surfacing the files OUR installer/docs are semantically coupled to:
 
-- **AUTO** — the adapter fully neutralizes it (decided by running the *actual* `transformContent` on
-  old vs new — "mechanical" is never a guess).
-- **CONTRACT** — structural change the build contract provably hard-fails on if unhandled (rename of
-  a *required* component, etc.). The build is the gate; triage just flags it.
-- **ESCALATE** — semantic/novel change that builds green but needs review (rename *with* content
-  edit, non-mechanical edit, new file, deletion of a non-required path). Fail-closed: anything not
-  provably mechanical escalates.
+- **AUTO** — shipped verbatim; no plugin-side obligations (upstream owns and tests the content —
+  read upstream's CHANGELOG for meaning). The bulk of any release.
+- **CONTRACT** — structural change T0 provably hard-fails on (root/children set, hook set, entry
+  skill, version constant, compiled data). The build is the gate; triage just flags it.
+- **ESCALATE** — a change on an **installer-coupled** file whose semantics T0 can't assert:
+  `settings.json`, `.mcp.json`, `.gitignore`, `CLAUDE.md`, `settings.local.json.example`,
+  `aidlc-version.ts`. Review the installer's merge rules and the README's claims.
 
-It also emits **`t2b.advised`** (see T2). `SKIP_TRIAGE=1` to bypass; `make triage SHA=<sha>` standalone.
+It also emits **`smoke.advised`** (JSON: `smoke: {advised, reasons}`) when the engine control
+surface (hooks/, tools/, protocols/, settings.json) changed — the deterministic signal to run the
+billable T2a load smoke and read upstream's changelog with extra care before releasing.
+`SKIP_TRIAGE=1` to bypass; `npm run triage -- <sha> --repo <clone>` standalone.
 
 ### Versioning & release tags
 
-`package.json` is the **source of truth** for the version: `build.mjs` generates
-`dist/.../plugin.json` from it, and the build fails if `.claude-plugin/marketplace.json` disagrees —
-so `marketplace.json` must be bumped to match (the build enforces this; it isn't a second source).
-The version is decoupled from the upstream SHA (upstream is tagless): `UPSTREAM.lock` records *what
-upstream we vendor*, `package.json` is *our* release counter. On each adopted snapshot, bump
-`2.0.0-alpha.N` in `package.json` **and** `.claude-plugin/marketplace.json` (keep them equal), and
-add a `CHANGELOG.md` entry.
+**The plugin version mirrors upstream's framework version** (the `AIDLC_VERSION` constant in the
+payload): plugin `2.1.4` ships upstream `v2.1.4`; a plugin-only fix on the same payload is
+`2.1.4-p1`. The build **fails** on any other version. `package.json` is the source of truth;
+`.claude-plugin/marketplace.json` must be bumped to match (also enforced). Add a `CHANGELOG.md`
+entry per release.
 
-`make tag` mints an annotated tag `v<version>+up.<upstream-short-sha>` (e.g.
-`v2.0.0-alpha.1+up.392d576`). The `+up.<short>` is SemVer **build metadata** — a provenance *label*,
-not version identity (so never publish two releases differing only after `+` — always bump
-`alpha.N`). The full upstream SHA + `src` tree hash go in the tag *message*. Git tags aren't
-inherently immutable — **protect the tag on the remote**.
+`npm run tag` mints an annotated tag `v<version>+up.<upstream-short-sha>` (e.g.
+`v2.1.4+up.b61e0ed`). The `+up.<short>` is SemVer **build metadata** — a provenance *label*, not
+version identity (never publish two releases differing only after `+`). The full upstream SHA +
+tree hash go in the tag *message*; the tag script verifies the **committed** `src/` tree equals the
+lock's hash before minting. Git tags aren't inherently immutable — **protect the tag on the remote**.
 
-The **`release-upstream` skill** (`.claude/skills/`, repo-only, not shipped) drives this whole
-pipeline interactively and stops before pushing.
+The **`release-upstream` skill** (`.claude/skills/`, repo-only, not shipped) drives this pipeline
+interactively and stops before pushing.
 
 ## Verification tiers
 
 ### T0 — build contract (free, every build)
 
-`build.mjs` is an *adapter* assuming upstream's exact layout/formats. It **fails the build** when:
+`build.mjs` asserts everything the installer and docs depend on. **When a contract check fails**,
+the message names what changed; map it to the fix (always in `targets/claude/`, never `src/`):
 
-- `src/` gains an unexpected (dir *or* file), or loses a required, top-level entry;
-- a Kiro agent JSON has an unknown key, non-array `tools`, no usable `name`, or a tool absent from `TOOL_MAP`;
-- a known Kiro construct (`invokeSubAgent`, `askAgent`) is present in `src/` **and** survives un-rewritten into `dist/` (an upstream rewording made a regex miss);
-- `marketplace.json`'s version disagrees with `package.json`.
-
-It prints a build report and warns on Kiro markers in `src/`. A green build means the adapter
-actually handled this snapshot, not merely that the output parsed.
-
-**When a contract check fails** — each message names what changed; map it to the fix:
-
-| Failure | What upstream did | Fix in `targets/claude/` |
+| Failure | What upstream did | Fix |
 |---|---|---|
-| unexpected/missing top-level `src/` dir or file | added/renamed/removed content | decide whether to ship it; update `REQUIRED_SRC_DIRS` + build steps |
-| agent unknown key / non-array `tools` / no `name` | changed the agent JSON schema | update `KNOWN_AGENT_KEYS` / `buildAgents()` |
-| agent uses unmapped tool | introduced a new tool | add it to `TOOL_MAP` |
-| `…still contains <Kiro primitive>` in `dist/` | reworded a primitive so a regex missed | update `kiroToClaude()` |
+| `src/ top-level … expected exactly […]` | added/renamed/removed a root entry | update `REQUIRED_SRC_ROOT` **and** the installer's placement rules |
+| `src/.claude children … expected exactly […]` | changed the framework layout | update `REQUIRED_CLAUDE_CHILDREN`; review the installer |
+| `settings.json has unknown top-level key(s)` | added configuration | extend `SETTINGS_KNOWN_KEYS` **and** `mergeSettings()` in the installer |
+| `hook command … does not match the expected shape` | changed hook invocation | update `HOOK_CMD_RE`; re-check README permissions guidance |
+| `hooks/*.ts […] != scripts referenced by settings.json` | added/removed/rewired a hook | review the wiring, then update the check if legitimate |
+| `unknown MCP server(s)` | added an MCP server | document its credentials story in README, extend `MCP_KNOWN_SERVERS` |
+| `.gitignore no longer contains the marker` | reworded the AI-DLC block header | update `GITIGNORE_BLOCK_MARKER` + the installer together |
+| `cannot parse AIDLC_VERSION` | moved/renamed the version constant | update `frameworkVersion()` (build) + `readVersion()` (installer) |
+| `entry skill …/SKILL.md missing` / `has no SKILL.md` / `catalogue shrank` | restructured the skill catalogue | verify intent, adjust `REQUIRED_FRAMEWORK_SKILLS` / floors |
+| `cannot parse compiled data` | moved/broke compiled engine data | investigate — the installed engine would be dead |
+| `framework/ … differs from src/` | (our bug) the build mutated the payload | fix the build; the payload must ship verbatim |
+| `plugin version does not mirror framework version` | new upstream version adopted | set `package.json` + `marketplace.json` to the framework version |
 | `marketplace.json version != package.json` | versions drifted | bump both to match |
 
 Then rebuild; if mid-sync, re-run `sync-upstream.sh` (the lock was left untouched on failure).
 
-### `make test` — the free meta-suite (every change)
+### `npm test` — the free deterministic suite (every change)
 
-Runs four suites: contract-drift tests (each gate provably fails on its target drift), the T1 triage
-classifier, the T3 scorer (parity-locked to upstream), and the **`dist/`-freshness guard**
-(`dist-fresh.mjs` — committed `dist/claude/` must equal a fresh build of `src/`). The build also runs
-**`claude plugin validate`** when the `claude` CLI is resolvable (`CLAUDE_BIN`/PATH; WARN-skip if
-absent, hard-fail with `AIDLC_REQUIRE_CLAUDE_VALIDATE=1`).
+Four suites, no network, no LLM:
 
-### T2 — behavioral smoke (billable; OFF by default)
+1. **`test/drift-injection.mjs`** — meta-test: every T0 gate above provably fails on its target
+   drift (+ a fake-`claude` check that the validate gate is wired, + build idempotency).
+2. **`test/triage.test.mjs`** — meta-test: T1 buckets every change kind correctly and the smoke
+   advisory fires (only) on control-surface changes.
+3. **`test/installer.test.mjs`** — **the keystone**: installs the committed payload into a scratch
+   project with the real installer, then runs **upstream's own `doctor`** and requires 0 failures;
+   also proves idempotency, `--check` write-freedom, additive merging into pre-existing
+   `settings.json`/`.mcp.json`/`.gitignore` (user values always preserved), the fresh-install
+   **conflict** policy (a pre-existing differing file is never overwritten — reported, exit 3),
+   update-mode refresh with every differing overwrite listed, **symlink write-refusal** (file and
+   directory symlinks; nothing outside the project is touched), and the self-install guard.
+   Requires `bun` (SKIPs without it; `AIDLC_REQUIRE_INSTALLER_TEST=1` to hard-require).
+4. **`test/dist-fresh.mjs`** — committed `dist/claude/` == a fresh build of `src/`.
 
-T2 runs the built plugin under `claude -p`. **Off by default** — it makes billable LLM/API calls and
-has found no plugin defects in practice (every real bug was caught by the free gates).
+The build additionally runs **`claude plugin validate`** when the CLI is resolvable
+(`CLAUDE_BIN`/PATH; WARN-skip if absent, `AIDLC_REQUIRE_CLAUDE_VALIDATE=1` to require) and a **bun
+parse check** on the installer (WARN-skip; `AIDLC_REQUIRE_BUN_CHECK=1`).
 
-- **`make smoke`** (cheap, ~1 turn) — confirms the plugin loads with no `plugin_errors` and every
-  required skill + agent is present, namespaced `aidlc-v2:*`. `sync-upstream.sh` runs it only with
-  `RUN_SMOKE=1`. Recommended for release candidates.
-- **`make smoke-workflow`** (expensive, opt-in) — copies the plugin to a scratch dir with the human
-  gates flipped off, runs a fixture intent, and asserts both the builder *and* validator subagents
-  spawned, *our* process-check hook fired, and the specific AI-DLC artifacts appeared
-  (`state/intent-state.md`, `workflow.md`, `state/process-checkpoint.json`). A turn/budget cap counts
-  as clean only if the run already reached the validator + wrote that state spine.
+### T2a — load smoke (billable; opt-in)
 
-> ⚠ `make smoke-workflow` runs freshly-synced upstream instructions under
-> `--dangerously-skip-permissions`. `--add-dir` is **not** a security sandbox — run only on a
-> disposable machine/container/CI with no secrets, then set `AIDLC_SMOKE_TRUST=1`.
+`npm run smoke` runs the built plugin under `claude -p` (one ~1-turn call) and asserts the plugin
+loads with no `plugin_errors` and exposes **exactly** the installer surface: the `aidlc-v2:aidlc`
+entry skill, **no** leaked framework skills (`aidlc-v2:aidlc-*` would mean the payload got scanned
+as plugin content), and no plugin agents. Run it when T1's `smoke.advised` fires or before a
+release. `sync-upstream.sh` runs it only with `RUN_SMOKE=1`. Skips cleanly without the `claude`
+CLI (`AIDLC_REQUIRE_SMOKE=1` to require).
 
-Both skip cleanly without the `claude` CLI (`AIDLC_REQUIRE_SMOKE=1` to require). Timeouts: T2a 90s,
-T2b `AIDLC_SMOKE_TIMEOUT_MS` (default 30 min).
+### Retired tiers (history)
 
-**When is T2b worth the money?** Deterministically: `t2b.advised` is `true` only when a sync touches
-the runtime *behavioral surface* — agent defs, the orchestrator/builder/validator protocols, the
-process-checker, the state-machine/workflow conventions, the orchestrator/workflow-composition
-skills, or an interaction-flag *value* flip (incl. deletes/renames of those). Content-only snapshots
-(stage prose, convention wording, validation specs) get `false`. The release skill prompts for T2b
-only when it fires.
-
-### T3 — quality-regression scorer (release-only)
-
-`make score CAND=<dir> GOLD=<dir> [MIN=…]` — a dependency-free, deterministic port of upstream's
-heuristic scorer (term-frequency cosine for intent, Jaccard of identifiers+headings for design,
-heading-coverage for completeness), **parity-locked bit-for-bit** to upstream (see
-`test/score.test.mjs`). Compares a candidate `aidlc-docs/` tree against a committed golden master.
-The scorer is deterministic; the *candidate* comes from a full autonomous run, so T3 is
-**release-only**. It's honest lexical/structural similarity — a signal for human review, not a
-semantic-quality proof (the optional LLM scorer isn't ported). See `test/golden/README.md` to
-capture a golden master.
+The pre-installer adapter had a T2b autonomous-workflow smoke and a T3 golden-master scorer, built
+for upstream's old `src/` layout (14 skills, Kiro-JSON agents, `aidlc-docs/` artifacts). The v2
+restructure replaced that world (compiled stage-graph + generated runners + project-tree install)
+and upstream now maintains its own engine test suite and CI — duplicating it against a verbatim
+payload adds cost, not signal. Their role is covered by `installer.test.mjs` (upstream's `doctor`
+as the behavioral oracle) + upstream's own tests. See git history (`targets/claude/score.mjs`,
+`smoke.mjs --workflow`) if they're ever worth reviving.

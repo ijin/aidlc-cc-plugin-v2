@@ -4,14 +4,14 @@
     "name": "ijin"
   },
   "metadata": {
-    "description": "AI-DLC v2 (alpha) - agent-orchestrated AI-Driven Development Lifecycle for Claude Code"
+    "description": "AI-DLC v2 — installer plugin shipping upstream awslabs/aidlc-workflows Claude Code target at pinned releases"
   },
   "plugins": [
     {
       "name": "aidlc-v2",
       "source": "./dist/claude",
-      "description": "AI-DLC v2 (alpha) - agent-orchestrated AI-Driven Development Lifecycle. Ported from awslabs/aidlc-workflows v2; installs alongside the stable v1 plugin.",
-      "version": "2.0.0-alpha.1",
+      "description": "AI-DLC v2 for Claude Code — installer plugin for the AI-Driven Development Lifecycle. Ships awslabs/aidlc-workflows own Claude Code target (verbatim, at a pinned release) and installs/updates it in your project via /aidlc-v2:aidlc.",
+      "version": "2.1.4",
       "author": {
         "name": "ijin"
       },

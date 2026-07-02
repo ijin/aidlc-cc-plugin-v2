@@ -1,5 +1,18 @@
 # AI-DLC v2 — sync verification architecture (Q1/Q2/Q3)
 
+> **Historical note (2.1.4 re-target).** This doc describes the verification architecture for the
+> ORIGINAL adapter, built when upstream v2 was a tagless dev branch (`v2-evaluator`) with a Kiro-
+> shaped `src/` layout. Upstream has since restructured (one core, N harnesses; it builds its own
+> `dist/claude` and releases via `v2.x` tags), and this repo pivoted to an **installer plugin**
+> shipping that tree verbatim. Still current: the Q1 tagging convention (`+up.<short-sha>` build
+> metadata over a full-SHA lock pin) and the gate-pyramid philosophy (free deterministic tiers
+> first, billable tiers opt-in and signal-gated). Superseded: the AUQ analysis (Q2 — upstream's
+> conversational flow made it moot, as recommended here), the transform-coverage notion of T1
+> "mechanical" (there is no transform anymore; T1 now keys on installer-coupled files), T2b and T3
+> (retired — upstream tests its own engine; our behavioral oracle is now upstream's `doctor` run
+> against a real install, free and deterministic in `test/installer.test.mjs`). The current
+> authoritative description is `MAINTAINERS.md`.
+
 Working doc. Decisive answers + a layered verification design, to be pressure-tested with Codex.
 
 ## Q1 — Tags with the upstream short hash (now, before upstream tags v2)

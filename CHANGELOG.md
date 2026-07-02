@@ -4,9 +4,51 @@ All notable changes to the AI-DLC v2 Claude Code plugin are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 This plugin packages the **v2** rewrite of [awslabs/aidlc-workflows](https://github.com/awslabs/aidlc-workflows)
-as a Claude Code plugin. v2 lives only on an upstream development *branch* (`v2-evaluator`) with no
-upstream tags, so releases here are independent `2.0.0-alpha.N` builds. Each release records the exact
-upstream commit it was built from in `UPSTREAM.lock` and in the release tag (`vX.Y.Z+up.<short-sha>`).
+as a Claude Code plugin. Upstream releases v2 via `v2.x` tags on its `v2` branch; the plugin version
+**mirrors the adopted framework version** (plugin-only patches append `-pN`). Each release records the
+exact upstream commit it was built from in `UPSTREAM.lock` and in the release tag
+(`vX.Y.Z+up.<short-sha>`).
+
+## [2.1.4] - 2026-07-02
+
+Re-targets the plugin from the frozen `v2-evaluator` branch to upstream's release line, adopting
+**upstream v2.1.4** (commit `b61e0ed`, tagged upstream 2026-06-29 — full provenance in
+`UPSTREAM.lock`). Upstream restructured v2 from the ground up between our previous snapshot and
+this one; this release changes what the plugin *is* accordingly.
+
+### Changed — the plugin is now an installer
+- Upstream now builds its **own Claude Code target** (`dist/claude`: a `.claude/` framework tree of
+  38 skills, 13 agents, TypeScript tools/hooks run via bun, a compiled stage graph, `settings.json`,
+  `.mcp.json`, and a seed `aidlc/` workspace) and its engine requires living at
+  `<project>/.claude/`. The plugin therefore ships that tree **verbatim** (`framework/`,
+  byte-identity enforced by the build) plus one skill and one installer:
+  - `/aidlc-v2:aidlc` installs or updates the framework into the current project — additively
+    merging any pre-existing `.claude/settings.json`, `.mcp.json`, and `.gitignore` (user values are
+    never changed), seeding the `aidlc/` workspace only where absent, and never touching
+    `.claude/settings.local.json`. On a fresh install, pre-existing files that differ from the
+    framework's are surfaced as conflicts (exit 3) rather than overwritten; updates list every
+    refreshed file; symlinks are never written through. Idempotent; `--check` previews.
+  - After installation, every upstream command works exactly as upstream documents it, unnamespaced
+    (`/aidlc`, `/aidlc-<stage>`, `/aidlc --doctor`, …).
+- The old adapted surface (namespaced `/aidlc-v2:aidlc-orchestrator` + 14 transformed skills +
+  builder/validator agents + the process-check hook) is gone — upstream replaced that architecture
+  itself (compiled stage-graph engine, 32 stages, 9 scopes, 13 domain agents).
+- **New prerequisite: bun** (upstream's tools/hooks are TypeScript). AWS Bedrock remains upstream's
+  shipped model default; `uv/uvx` + AWS credentials are optional (MCP servers degrade gracefully).
+- Versioning now mirrors upstream (this release: `2.1.4`).
+
+### Maintenance tooling (repo-only, not shipped)
+- The sync pipeline now vendors upstream's `dist/claude` at **release-tag commits** and the build
+  contract asserts everything the installer depends on (exact tree layout, settings/hook shapes,
+  MCP server set, the `.gitignore` block marker, version constant, compiled-data parseability) plus
+  payload byte-identity.
+- T1 triage re-keyed to the installer model (ESCALATE = installer-coupled files; `smoke.advised`
+  signals engine-control-surface changes).
+- New free end-to-end gate: `test/installer.test.mjs` installs the payload into a scratch project
+  and requires **upstream's own `doctor` to pass (0 failures)**, plus idempotency/merge/no-write
+  guarantees.
+- Retired: the T2b autonomous workflow smoke and the T3 golden-master scorer (built for the old
+  layout; upstream now tests its own engine — see MAINTAINERS.md).
 
 ## [2.0.0-alpha.1] - 2026-06-07
 

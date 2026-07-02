@@ -1,7 +1,7 @@
 ---
 name: release-upstream
-description: Drive an AI-DLC v2 plugin release — sync from upstream, review the diff, bump the version, build, run the verification gates, commit and tag locally, and write a summary report. Stops before pushing/publishing.
-argument-hint: "[<upstream-sha>]  (omit for the v2-evaluator branch tip)"
+description: Drive an AI-DLC v2 plugin release — sync an upstream release-tag snapshot, review the diff, set the mirrored version, build, run the verification gates, commit and tag locally, and write a summary report. Stops before pushing/publishing.
+argument-hint: "[<upstream-sha>]  (peeled v2.x tag commit; omit to discover the newest tag)"
 disable-model-invocation: true
 ---
 
@@ -22,8 +22,8 @@ never be copied into `dist/claude/`.
   STOP. The final report tells the human the exact commands to publish.
 - **Never edit `src/` or `dist/` by hand.** If a change is needed there, it goes through the build.
 - **Stop and ask** (use the `AskUserQuestion` tool) at every genuine decision gate below. Do not
-  substitute your judgment for the human's on: adopting a snapshot, handling a novel upstream
-  concept, or the version bump.
+  substitute your judgment for the human's on: adopting a snapshot or handling a novel upstream
+  concept.
 - **Run commands with the Bash tool and show their output.** If a step fails, stop and report — do
   not paper over it.
 
@@ -35,101 +35,102 @@ never be copied into `dist/claude/`.
    commit/stash first — a release must start from a clean tree.
 3. Detect prerequisites (record which are present for the report; **skip dependent steps if absent**,
    do not fail):
-   - **Upstream clone** — `sync-upstream.sh` needs it (default `../aidlc-workflows`). Check it exists
-     and is a git repo. If absent, you cannot sync; ask the human for the path or stop.
-   - **`claude` CLI** (authenticated to a model provider) — needed for T2 smoke and T3 score. If absent, note it and
-     skip T2/T3 (the report must say they were skipped).
+   - **Upstream clone** — `sync-triage.mjs` needs one (default `../aidlc-workflows`; the sync script
+     itself clones fresh). If absent, ask the human for the path or fetch one.
+   - **`bun`** — needed for the installer end-to-end test inside `npm test` (it SKIPs without bun;
+     note that in the report if so).
+   - **`claude` CLI** (authenticated) — needed for the optional T2a load smoke and the build's
+     `claude plugin validate` gate. If absent, note it.
 
 ## Steps
 
-### 1. Sync the upstream snapshot (T0 + T1)
-Run the sync script with the requested SHA (or bare for the branch tip):
+### 0. Pick the snapshot (release tags, not branch tips)
+Upstream releases v2 via tags on its `v2` branch. If no SHA was given, discover the newest:
 
 ```
-./targets/claude/sync-upstream.sh <upstream-sha>
+git ls-remote https://github.com/awslabs/aidlc-workflows.git 'refs/tags/v2.*'
 ```
 
-This runs **T1 triage** (classifies the upstream diff), swaps `src/`, **rebuilds `dist/`**, runs the
-**T0 build contract**, and rewrites `UPSTREAM.lock` — but only on a clean build, and it does NOT
-commit. Capture its full output.
+Use the **peeled** commit (`vX.Y.Z^{}`). Present the candidate tag + its CHANGELOG entry (fetch
+`CHANGELOG.md` at that tag) and confirm adoption with `AskUserQuestion`. Do not pin the bare `v2`
+branch tip unless the human explicitly asks (it is unreleased and force-pushable).
 
-- If it reports **"Already at <sha> — nothing to sync"**, stop: there is nothing to release.
-- If the build/contract check **fails**, stop and report the failure verbatim (it names what upstream
-  changed and which part of `build.mjs` to update). Do not proceed.
-- The script pauses interactively on T1 escalations. Since you drive it non-interactively, run it with
-  `SKIP_TRIAGE=1` set **only after** you have run triage yourself and presented the result (next
-  step) — or run triage first, then sync with `SKIP_TRIAGE=1`. Prefer: run `sync-triage.mjs` first
-  (read-only), present escalations, get the human's decision, THEN sync.
-
-### 2. Review the triage escalations (the human-judgment gate)
-Run the triage standalone (read-only) against the target SHA to get the structured classification:
+### 1. Review the triage first (the human-judgment gate)
+Run the triage standalone (read-only) against the target SHA:
 
 ```
-node targets/claude/sync-triage.mjs <upstream-sha> --json
+node targets/claude/sync-triage.mjs <upstream-sha> --repo <clone> --json
 ```
 
-Summarize the **ESCALATE** items in plain language. For each genuinely-novel item (a new interaction
-flag, a new skill/agent, a reworded protocol step the adapter may not handle), use `AskUserQuestion`
-to ask the human how to proceed: *adopt as-is / needs an adapter change first / defer (don't release
-this snapshot)*. If the human says an adapter change is needed, STOP — that is hand work on
-`build.mjs`/`targets/`, outside this skill's scope; report what's needed.
+Summarize the **ESCALATE** items in plain language — under the installer model these are the
+installer-coupled files (`settings.json`, `.mcp.json`, `.gitignore`, `CLAUDE.md`,
+`settings.local.json.example`, `aidlc-version.ts`): for each, check whether the installer's merge
+rules and the README's claims still hold, and use `AskUserQuestion` to decide: *adopt as-is / needs
+an installer-or-docs change first / defer*. If installer/docs work is needed, STOP — that is hand
+work outside this skill's scope; report what's needed.
 
-**Read the `t2b` field of the triage JSON** — it deterministically says whether the expensive
-behavioral smoke (T2b) is warranted. `t2b.advised` is `true` only when the change touches the
-runtime "behavioral surface" (agent defs, the orchestrator/builder/validator protocols, the
-process-checker, the state-machine/workflow conventions, the orchestrator/workflow-composition
-skills, or an interaction-flag *value* flip) — the only things T2b can verify that the free gates
-can't. Remember this verdict for step 5; do NOT run T2b on a content-only snapshot.
+**Read the `smoke` field of the triage JSON** — `smoke.advised` is `true` when the engine control
+surface (hooks/, tools/, protocols/, settings.json) changed. Remember it for step 5. CONTRACT items
+need no decision (the build gates them); AUTO items are verbatim payload (point the human at
+upstream's CHANGELOG for meaning).
 
-### 3. Bump the version (the release-counter gate)
-The version lives in `package.json` AND `.claude-plugin/marketplace.json` (the build asserts they
-match). Read the current version, then use `AskUserQuestion` to confirm the next one (default: bump
-the `alpha.N` counter — `2.0.0-alpha.N` → `2.0.0-alpha.N+1`). Edit **both** files to the chosen
-version. Build metadata (`+up.<sha>`) is NOT part of the version — it's added by the tag, so do not
-put it in these files.
+### 2. Sync the snapshot (T0 gate)
+
+```
+SKIP_TRIAGE=1 ./targets/claude/sync-upstream.sh <upstream-sha>
+```
+
+(`SKIP_TRIAGE=1` because you already ran and reviewed triage in step 1.) This swaps `src/`,
+**rebuilds `dist/`**, runs the **T0 build contract**, and rewrites `UPSTREAM.lock` — only on a
+clean build; it does NOT commit. Capture the full output, including any **NOTE about
+gitignore-matched files** (needed for the commit step).
+
+- **"Already at <sha> — nothing to sync"** → stop: nothing to release.
+- Build/contract **failure** → stop and report verbatim (the message names the fix; see the
+  MAINTAINERS.md table). Repo state: `src/`/`dist/` swapped, lock unchanged —
+  `git checkout -- src dist` to abort.
+
+### 3. Set the mirrored version
+The plugin version **mirrors the adopted framework version** (the build hard-fails otherwise).
+Read it from the build report ("framework version") or `src/.claude/tools/aidlc-version.ts`, and set
+**both** `package.json` and `.claude-plugin/marketplace.json` to exactly that version (or, for a
+plugin-only re-release on the same payload, `<fw>-pN` — confirm with the human). Build metadata
+(`+up.<sha>`) is NOT part of the version — the tag adds it.
 
 ### 4. Update the changelog
-Add/refresh the top entry in `CHANGELOG.md` for the new version: focus on **what upstream snapshot
-was adopted** (old → new SHA, dates) and any notable upstream changes from the triage, plus any
-Claude-adapter change. Keep it reader-facing (what changed in the release), not a build diary.
+Add the top entry in `CHANGELOG.md` for the new version: **which upstream release was adopted**
+(tag, old → new SHA, dates), notable upstream changes (from ITS changelog for the tag range), and
+any installer/plugin-side change. Reader-facing, not a build diary.
 
 ### 5. Rebuild + run the gates
 - Rebuild so `dist/` reflects the new version: `node targets/claude/build.mjs build`
-- Run the meta-test suite (incl. the `dist/`-freshness guard): `npm test`. These are free + always run.
-- **T2 is OFF by default** (it makes billable LLM/API calls and found no plugin defects in practice).
-  Decide whether to run it from the **`t2b.advised` signal** captured in step 2, and ask the human:
-  - If `t2b.advised` is **true** (behavioral surface changed) AND the `claude` CLI is present: use
-    `AskUserQuestion` to offer running the autonomous workflow smoke — *run T2b now (≈minutes, real $) /
-    skip (I'll run it before publishing) / skip entirely*. If yes, run
-    `AIDLC_SMOKE_TRUST=1 node targets/claude/smoke.mjs --workflow` (in a disposable env) and fold the
-    result into the report.
-    - As the cheap middle option you may also offer just the **T2a load smoke**
-      (`node targets/claude/smoke.mjs`, ~1 turn) to at least confirm the rebuilt plugin still loads.
-  - If `t2b.advised` is **false** (content-only snapshot): do NOT prompt to run T2b. But since this is
-    a **release** (not a routine sync), still offer the cheap **T2a load smoke**
-    (`node targets/claude/smoke.mjs`, ~1 turn, ~$0.20) as the real-CLI "does the rebuilt plugin still
-    load?" check — recommended for every release candidate. Note the outcome (or that it was declined).
-  - If the `claude` CLI is absent: skip both, note it.
-- Never auto-run T3 score (release-candidate only; needs a golden master); mention it in the report.
+- Run the free deterministic suite: `npm test` (contract drift-injection, T1 meta-tests, the
+  **installer→upstream-doctor end-to-end**, dist-freshness). Always run; any failure → stop.
+- **T2a load smoke** (one billable LLM call): if `smoke.advised` was true in step 1, recommend it;
+  for any release candidate, offer it (`node targets/claude/smoke.mjs`). Ask with
+  `AskUserQuestion`: *run now / skip*. If the `claude` CLI is absent, note the skip.
 - Any failure in a gate you DID run → stop and report.
 
 ### 6. Commit + tag locally (NO push)
-- `git add -A && git commit` with a message summarizing the snapshot adoption + version bump.
+- Stage with **`git add --force -A src && git add -A`** (the vendored `src/.gitignore` matches
+  files upstream force-added — a plain add silently drops them), then `git commit` with a
+  **snapshot-focused, outside-reader** message (which upstream release was adopted and what it
+  brings; no internal process framing).
 - Mint the annotated release tag **without** pushing: `./targets/claude/tag-release.sh`
-  (no `--push`). It encodes `vX.Y.Z+up.<short-sha>` with the full SHA in the tag message.
+  (no `--push`). It encodes `vX.Y.Z+up.<short-sha>` with the full SHA + tree hash in the tag
+  message, and verifies the committed `src/` tree matches the lock.
 
 ### 7. Summary report
 Write a concise report (to chat, and offer to save it as `RELEASE-NOTES-<version>.md`) covering:
-- Upstream: old SHA → new SHA (+ dates), branch.
-- Triage outcome: counts of auto / contract / escalate; each escalation and the human's decision.
-- Version: old → new; changelog entry summary.
-- Gates: T0 build ✓/✗, `npm test` result, T2 smoke result (or "skipped — no claude CLI"), and that
-  T2b-workflow / T3-score were not auto-run.
+- Upstream: tag adopted, old SHA → new SHA (+ dates).
+- Triage outcome: counts of auto / contract / escalate; each escalation and the human's decision;
+  whether `smoke.advised` fired.
+- Version: old → new (mirroring policy); changelog entry summary.
+- Gates: T0 build ✓/✗, `npm test` result (note if the installer test SKIPped for missing bun),
+  T2a smoke result (or why skipped).
 - Local state: the commit SHA and tag created (not pushed).
-- **Next steps to publish** (the human runs these): `git push --follow-tags`, then
-  `./targets/claude/tag-release.sh --push` is unnecessary if already tagged — instead
-  `git push origin <tag>`; and (first time) create the GitHub repo / marketplace. Remind them to
-  protect the tag on the remote.
+- **Next steps to publish** (the human runs these): `git push`, `git push origin <tag>`; remind
+  them to protect the tag on the remote.
 
 ## On failure at any step
 Stop immediately, report the failing command's output, and state the repo's current state (e.g.

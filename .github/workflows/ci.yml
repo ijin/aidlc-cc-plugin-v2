@@ -20,10 +20,21 @@ jobs:
         with:
           node-version: 22
 
+      # bun runs the framework's TypeScript (the installer, and upstream's own
+      # doctor inside the installer end-to-end test). Without it those gates
+      # would silently SKIP — require them instead.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Build plugin
         run: node targets/claude/build.mjs build
         env:
           AIDLC_REQUIRE_CLAUDE_VALIDATE: "0"
+          AIDLC_REQUIRE_BUN_CHECK: "1"
 
-      - name: Verify gates (drift contract, T1 triage, T3 scorer, dist freshness)
+      - name: Verify gates (drift contract, T1 triage, installer→doctor e2e, dist freshness)
         run: npm test
+        env:
+          AIDLC_REQUIRE_INSTALLER_TEST: "1"

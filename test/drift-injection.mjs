@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // test/drift-injection.mjs — Meta-verification: prove each build contract gate
 // actually FAILS on the upstream-drift it is meant to catch (and that a clean
-// build PASSES). Without this, a contract check could silently degrade (e.g. a
-// regex that no longer matches) and we'd never know until a bad sync shipped.
+// build PASSES). Without this, a contract check could silently degrade and we'd
+// never know until a bad sync shipped.
 //
-// Strategy: copy the whole repo into a throwaway temp dir, mutate src/ (or a
-// manifest) to simulate one drift class, run `node targets/claude/build.mjs`
-// there, and assert the build exits non-zero AND the output contains the
-// expected message fragment. The real repo is never mutated.
+// Strategy: copy the whole repo into a throwaway temp dir, mutate src/ (or an
+// authored/manifest file) to simulate one drift class, run the build there, and
+// assert it exits non-zero AND the output contains the expected message
+// fragment. The real repo is never mutated.
 //
-// Also runs two positive checks: a clean build PASSES, and building twice yields
+// Also runs positive checks: a clean build PASSES, and building twice yields
 // byte-identical dist/ (idempotency).
 //
 // Usage: node test/drift-injection.mjs   (exit 0 = all gates behave correctly)
@@ -56,8 +56,6 @@ function runBuild(dir, env = {}) {
 // Make a clean throwaway copy of the repo (excluding heavy/irrelevant dirs).
 function freshCopy() {
   const dst = fs.mkdtempSync(path.join(os.tmpdir(), "aidlc-drift-"));
-  // Copy tracked + working files we need: src/, targets/, package.json,
-  // .claude-plugin/, UPSTREAM.lock. Skip .git, node_modules, dist (rebuilt).
   for (const item of ["src", "targets", "package.json", ".claude-plugin", "UPSTREAM.lock"]) {
     const s = path.join(REPO, item);
     if (fs.existsSync(s)) fs.cpSync(s, path.join(dst, item), { recursive: true });
@@ -69,12 +67,21 @@ function rm(d) {
   fs.rmSync(d, { recursive: true, force: true });
 }
 
-// A drift case: mutate(dir) simulates the drift; expect is a string the failing
-// build output must contain. CLAUDE_BIN points nowhere so the claude-validate gate
-// WARN-skips (hermetic + offline), and we FORCE AIDLC_REQUIRE_CLAUDE_VALIDATE=0 so
-// a release-CI parent env (which may set =1) can't turn the skip into a failure and
-// break these structural tests.
+function editJson(file, mutate) {
+  const o = JSON.parse(fs.readFileSync(file, "utf-8"));
+  mutate(o);
+  fs.writeFileSync(file, JSON.stringify(o, null, 2) + "\n");
+}
+
+// CLAUDE_BIN points nowhere so the claude-validate gate WARN-skips (hermetic +
+// offline), and AIDLC_REQUIRE_CLAUDE_VALIDATE=0 so a release-CI parent env can't
+// turn the skip into a failure and break these structural tests.
 const HERMETIC = { CLAUDE_BIN: "/nonexistent/claude", AIDLC_REQUIRE_CLAUDE_VALIDATE: "0" };
+
+const bunAvailable = (() => {
+  try { execFileSync("bun", ["--version"], { stdio: "pipe" }); return true; }
+  catch { return false; }
+})();
 
 const CASES = [
   {
@@ -83,136 +90,133 @@ const CASES = [
     expectPass: true,
   },
   {
-    name: "unexpected top-level src/ dir → fail",
-    mutate: (d) => fs.mkdirSync(path.join(d, "src", "newthing")),
-    expect: "unexpected top-level dir",
-  },
-  {
-    name: "unexpected top-level src/ file → fail",
+    name: "unexpected top-level src/ entry → fail (exact root set)",
     mutate: (d) => fs.writeFileSync(path.join(d, "src", "STRAY.txt"), "x"),
-    expect: "unexpected top-level file",
+    expect: "expected exactly",
   },
   {
-    name: "missing required src/ dir (skills) → fail",
-    mutate: (d) => rm(path.join(d, "src", "skills")),
-    expect: "missing required dir",
+    name: "missing top-level src/.mcp.json → fail (exact root set)",
+    mutate: (d) => fs.rmSync(path.join(d, "src", ".mcp.json")),
+    expect: "expected exactly",
   },
   {
-    name: "agent unknown key → fail",
+    name: "unexpected .claude child → fail (exact children set)",
+    mutate: (d) => fs.mkdirSync(path.join(d, "src", ".claude", "newthing")),
+    expect: "expected exactly",
+  },
+  {
+    name: "missing .claude child (settings.local.json.example) → fail",
+    mutate: (d) => fs.rmSync(path.join(d, "src", ".claude", "settings.local.json.example")),
+    expect: "expected exactly",
+  },
+  {
+    name: "settings.json unknown top-level key → fail (installer merge would drop it)",
+    mutate: (d) => editJson(path.join(d, "src", ".claude", "settings.json"), (s) => { s.surpriseKey = {}; }),
+    expect: "unknown top-level key",
+  },
+  {
+    name: "settings.json hook command shape changed → fail",
+    mutate: (d) => editJson(path.join(d, "src", ".claude", "settings.json"), (s) => {
+      s.hooks.Stop[0].hooks[0].command = "node .claude/hooks/aidlc-stop.js";
+    }),
+    expect: "does not match the expected",
+  },
+  {
+    name: "stray unreferenced hook script → fail (exact hook set)",
+    mutate: (d) => fs.writeFileSync(path.join(d, "src", ".claude", "hooks", "aidlc-extra.ts"), "// stray\n"),
+    expect: "scripts referenced by settings.json",
+  },
+  {
+    name: "unknown MCP server → fail (undocumented credentials story)",
+    mutate: (d) => editJson(path.join(d, "src", ".mcp.json"), (m) => {
+      m.mcpServers["surprise-server"] = { command: "uvx", args: ["x"] };
+    }),
+    expect: "unknown MCP server",
+  },
+  {
+    name: ".gitignore AI-DLC marker gone → fail (installer append logic keys on it)",
     mutate: (d) => {
-      const f = path.join(d, "src", "agents", "aidlc-builder-agent.json");
-      const a = JSON.parse(fs.readFileSync(f, "utf-8"));
-      a.newField = "surprise";
-      fs.writeFileSync(f, JSON.stringify(a, null, 2));
+      const f = path.join(d, "src", ".gitignore");
+      fs.writeFileSync(f, fs.readFileSync(f, "utf-8").replace(/# AI-DLC —/g, "# AIDLC:"));
     },
-    expect: "unknown key",
+    expect: "no longer contains",
   },
   {
-    name: "agent unmapped tool → fail",
+    name: "version constant unparseable → fail",
     mutate: (d) => {
-      const f = path.join(d, "src", "agents", "aidlc-builder-agent.json");
-      const a = JSON.parse(fs.readFileSync(f, "utf-8"));
-      a.tools = ["read", "mcp__weird"];
-      fs.writeFileSync(f, JSON.stringify(a, null, 2));
+      const f = path.join(d, "src", ".claude", "tools", "aidlc-version.ts");
+      fs.writeFileSync(f, fs.readFileSync(f, "utf-8").replace("export const AIDLC_VERSION", "export const VERSION"));
     },
-    expect: "unmapped tool",
+    expect: "cannot parse AIDLC_VERSION",
   },
   {
-    name: "agent non-array tools → fail",
-    mutate: (d) => {
-      const f = path.join(d, "src", "agents", "aidlc-builder-agent.json");
-      const a = JSON.parse(fs.readFileSync(f, "utf-8"));
-      a.tools = "read";
-      fs.writeFileSync(f, JSON.stringify(a, null, 2));
-    },
-    expect: "not an array",
-  },
-  {
-    name: "agent missing name → fail",
-    mutate: (d) => {
-      const f = path.join(d, "src", "agents", "aidlc-builder-agent.json");
-      const a = JSON.parse(fs.readFileSync(f, "utf-8"));
-      delete a.name;
-      fs.writeFileSync(f, JSON.stringify(a, null, 2));
-    },
-    expect: "no valid string 'name'",
-  },
-  {
-    name: "required skill renamed (orchestrator gone) → fail",
+    name: "entry skill gone (skills/aidlc renamed) → fail",
     mutate: (d) =>
-      fs.renameSync(
-        path.join(d, "src", "skills", "aidlc-orchestrator"),
-        path.join(d, "src", "skills", "aidlc-conductor")
-      ),
-    expect: "required skill 'aidlc-orchestrator' missing",
+      fs.renameSync(path.join(d, "src", ".claude", "skills", "aidlc"), path.join(d, "src", ".claude", "skills", "aidlc-renamed")),
+    expect: "entry skill",
   },
   {
-    name: "required skill's SKILL.md renamed (dir stays) → fail",
-    // The dir existing isn't enough — the entry-point SKILL.md must be present.
-    mutate: (d) =>
-      fs.renameSync(
-        path.join(d, "src", "skills", "aidlc-orchestrator", "SKILL.md"),
-        path.join(d, "src", "skills", "aidlc-orchestrator", "RENAMED.md")
-      ),
+    name: "a skill dir without SKILL.md → fail",
+    mutate: (d) => fs.rmSync(path.join(d, "src", ".claude", "skills", "aidlc-feature", "SKILL.md")),
     expect: "has no SKILL.md",
   },
   {
-    name: "required agent renamed (name field) → fail",
-    // The dist filename derives from the JSON `name` field, and the orchestrator
-    // invokes the agent by that name — so renaming the FILE alone is harmless
-    // (dist still emits aidlc-builder-agent.md). The meaningful drift is a renamed
-    // `name` field, which breaks invocation; that is what must fail the build.
+    name: "skill catalogue shrinks below the floor → fail",
     mutate: (d) => {
-      const f = path.join(d, "src", "agents", "aidlc-builder-agent.json");
-      const a = JSON.parse(fs.readFileSync(f, "utf-8"));
-      a.name = "aidlc-maker-agent";
-      fs.writeFileSync(f, JSON.stringify(a, null, 2));
+      const dir = path.join(d, "src", ".claude", "skills");
+      const skills = fs.readdirSync(dir).filter((s) => s !== "aidlc");
+      // Delete enough skill dirs to fall under MIN_SKILLS (30).
+      for (const s of skills.slice(0, skills.length - 25)) rm(path.join(dir, s));
     },
-    expect: "required agent 'aidlc-builder-agent' missing",
+    expect: "catalogue shrank",
   },
   {
-    name: "reworded invokeSubAgent survives into dist → invariant fail",
-    mutate: (d) => {
-      const f = path.join(d, "src", "aidlc-common", "protocols", "aidlc-orchestrator-protocol.md");
-      let t = fs.readFileSync(f, "utf-8");
-      // Reword so kiroToClaude's regexes miss it, but the forbidden token remains.
-      t = t.replace(/Use `invokeSubAgent` with name `aidlc-builder-agent`\./, "Call invokeSubAgent for aidlc-builder-agent now:");
-      fs.writeFileSync(f, t);
-    },
-    expect: "still contains Kiro invokeSubAgent",
-  },
-  {
-    name: "process-checker .kiro rewrite missed (path form changed) → fail",
-    mutate: (d) => {
-      const f = path.join(d, "src", "aidlc-common", "scripts", "aidlc-process-checker.js");
-      let t = fs.readFileSync(f, "utf-8");
-      t = t.replace(/path\.join\(\s*"\.kiro"/, 'path.resolve(".kiro"');
-      fs.writeFileSync(f, t);
-    },
-    expect: "still has a quoted",
-  },
-  {
-    name: "interaction flag as bare YAML boolean → fail",
-    // The process-checker only recognises quoted "true"/"false". A bare boolean
-    // (flag: true) would silently default the gate ON — must fail the build.
-    mutate: (d) => {
-      const f = path.join(d, "src", "skills", "aidlc-requirements-analysis", "SKILL.md");
-      const t = fs.readFileSync(f, "utf-8").replace(/human-clarification:\s*"true"/, "human-clarification: true");
-      fs.writeFileSync(f, t);
-    },
-    expect: "not the quoted-string",
+    name: "compiled stage-graph.json corrupted → fail",
+    mutate: (d) => fs.writeFileSync(path.join(d, "src", ".claude", "tools", "data", "stage-graph.json"), "{not json"),
+    expect: "cannot parse compiled data",
   },
   {
     name: "marketplace.json version skew → fail",
-    mutate: (d) => {
-      const f = path.join(d, ".claude-plugin", "marketplace.json");
-      const m = JSON.parse(fs.readFileSync(f, "utf-8"));
+    mutate: (d) => editJson(path.join(d, ".claude-plugin", "marketplace.json"), (m) => {
       m.plugins[0].version = "9.9.9";
-      fs.writeFileSync(f, JSON.stringify(m, null, 2));
-    },
+    }),
     expect: "marketplace.json",
   },
+  {
+    name: "plugin version does not mirror framework version → fail",
+    mutate: (d) => {
+      editJson(path.join(d, "package.json"), (p) => { p.version = "9.9.9"; });
+      editJson(path.join(d, ".claude-plugin", "marketplace.json"), (m) => { m.plugins[0].version = "9.9.9"; });
+    },
+    expect: "does not mirror framework version",
+  },
+  {
+    name: "authored installer missing → fail",
+    mutate: (d) => fs.rmSync(path.join(d, "targets", "claude", "plugin", "installer", "aidlc-install.ts")),
+    expect: "authored plugin file missing",
+  },
+  {
+    name: "entry skill lost its installer invocation → fail",
+    mutate: (d) => {
+      const f = path.join(d, "targets", "claude", "plugin", "skills", "aidlc", "SKILL.md");
+      fs.writeFileSync(f, fs.readFileSync(f, "utf-8").replaceAll("${CLAUDE_PLUGIN_ROOT}/installer/aidlc-install.ts", "the installer"));
+    },
+    expect: "does not invoke",
+  },
 ];
+
+if (bunAvailable) {
+  CASES.push({
+    name: "installer that does not parse → fail (bun syntax gate)",
+    mutate: (d) => fs.writeFileSync(
+      path.join(d, "targets", "claude", "plugin", "installer", "aidlc-install.ts"),
+      "const oops: = broken(;\n"
+    ),
+    expect: "does not parse under bun",
+  });
+} else {
+  console.log("  (skipping bun syntax-gate case — bun not on PATH)");
+}
 
 console.log("Drift-injection meta-tests (each gate must catch its target drift):");
 for (const c of CASES) {
@@ -238,13 +242,11 @@ for (const c of CASES) {
 }
 
 // Validate-gate wiring: a fake `claude` that REJECTS (exit 1) must fail the build.
-// Proves the claude-validate gate is actually wired, not dead. (The 14 cases above
-// run with claude absent, so none exercise it.)
+// Proves the claude-validate gate is actually wired, not dead.
 {
   const dir = freshCopy();
   const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), "fakeclaude-"));
   const fake = path.join(fakeDir, "claude");
-  // Reject `plugin validate`, accept `--version` (so the gate runs, then fails).
   fs.writeFileSync(
     fake,
     '#!/usr/bin/env bash\ncase "$1" in\n  --version) echo "fake 0.0.0"; exit 0;;\n  plugin) echo "FAKE: plugin rejected" >&2; exit 1;;\nesac\nexit 0\n'

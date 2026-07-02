@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 # sync-upstream.sh — Refresh the vendored src/ from upstream at an explicit commit.
 #
-# Replaces the git-subtree workflow. Subtree is a poor fit here: upstream does not
-# publish a branch whose ROOT is the src/ we vendor, so a `git subtree pull` of the
-# full v2-evaluator branch would map upstream's repo root into our src/. Instead we
-# pin an explicit upstream SHA, sparse-checkout just its src/ subdir, swap it in,
-# and record the pin in UPSTREAM.lock.
+# Upstream does not publish a branch whose ROOT is the tree we vendor (we vendor
+# the UPSTREAM_SUBDIR of its repo — upstream's built Claude target, dist/claude),
+# so subtree/submodule are poor fits. Instead we pin an explicit upstream SHA,
+# sparse-checkout just that subdir, swap it into src/, and record the pin in
+# UPSTREAM.lock.
 #
 # This script automates the MECHANICS only. It deliberately does NOT commit: review
-# the diff and the build report, then commit/PR by hand. Upstream v2 has no tags and
-# v2-evaluator is force-pushable, so a human approves every snapshot.
+# the diff and the build report, then commit/PR by hand. Upstream cuts v2.x release
+# tags from its v2 dev branch — pin a TAG's commit, not a moving tip — and a human
+# approves every snapshot.
 #
 # Usage:
 #   targets/claude/sync-upstream.sh [--force] [<upstream-sha>]
-#     <upstream-sha>  Full or short commit SHA to pin to. If omitted, resolves the
-#                     current tip of UPSTREAM_BRANCH from the remote and uses that.
+#     <upstream-sha>  Full or short commit SHA to pin to (normally the peeled
+#                     commit of an upstream release tag, e.g. v2.1.4^{}). If
+#                     omitted, resolves the current tip of UPSTREAM_BRANCH from
+#                     the remote and uses that.
 #     --force         Skip the clean-worktree guard (allow uncommitted src//dist/
 #                     /UPSTREAM.lock changes to be overwritten).
 #
@@ -179,6 +182,20 @@ if [ "$COPIED_HASH" != "$UPSTREAM_TREE_HASH" ]; then
   die "copied src/ ($COPIED_HASH) != upstream $FULL_SHA:$UPSTREAM_SUBDIR ($UPSTREAM_TREE_HASH). The copy was not faithful (mode/symlink/encoding normalization?). Investigate before recording the lock."
 fi
 
+# The vendored tree includes upstream's own .gitignore (now src/.gitignore),
+# whose patterns apply to OUR repo too — and upstream force-added some files
+# that its own ignore file matches (e.g. aidlc/active-space). gitignore only
+# affects UNTRACKED files, so once committed they behave normally; but the FIRST
+# commit introducing such a file must stage it with --force or git silently
+# drops it (the lock's tree hash is computed with --force, so the committed
+# tree would no longer match it — tag-release.sh catches that skew at release
+# time, long after the bad commit). Surface any such files now.
+IGNORED_PRESENT="$(git -C "$ROOT" status --porcelain --ignored=matching -- src 2>/dev/null | sed -n 's/^!! //p')"
+if [ -n "$IGNORED_PRESENT" ]; then
+  echo "==> NOTE: files present in src/ but matched by a .gitignore — stage with 'git add --force -A src':"
+  echo "$IGNORED_PRESENT" | sed 's/^/      /'
+fi
+
 # --- Build + adapter contract checks (fails loudly on drift) ---
 # Run the build BEFORE recording the new pin. If a contract check fails, the lock
 # still reflects the last KNOWN-GOOD state, so it never lies and a re-run retries
@@ -232,7 +249,9 @@ cat <<EOF
 
     Next steps (NOT done automatically — a human reviews every snapshot):
       git diff --stat src/ UPSTREAM.lock dist/
-      git add -A && git commit   # then open a PR
+      git add --force -A src && git add -A && git commit   # then open a PR
+      # (--force on src/: the vendored src/.gitignore matches some files
+      #  upstream ships force-added; without it git silently drops them)
 
     If the build above FAILED on a contract check, upstream changed something the
     adapter does not yet handle. Read the failure, update targets/claude/build.mjs,
