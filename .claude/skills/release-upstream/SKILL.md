@@ -36,7 +36,9 @@ never be copied into `dist/claude/`.
 3. Detect prerequisites (record which are present for the report; **skip dependent steps if absent**,
    do not fail):
    - **Upstream clone** — `sync-triage.mjs` needs one (default `../aidlc-workflows`; the sync script
-     itself clones fresh). If absent, ask the human for the path or fetch one.
+     itself clones fresh). If absent, ask the human for the path or fetch one. If present, REFRESH
+     it before triage so the target SHA resolves (`git -C <clone> fetch origin v2 --tags`) — a stale
+     clone fails with "target SHA not found".
    - **`bun`** — needed for the installer end-to-end test inside `npm test` (it SKIPs without bun;
      note that in the report if so).
    - **`claude` CLI** (authenticated) — needed for the optional T2a load smoke and the build's
@@ -61,6 +63,10 @@ Run the triage standalone (read-only) against the target SHA:
 ```
 node targets/claude/sync-triage.mjs <upstream-sha> --repo <clone> --json
 ```
+
+Exit codes are semantic, not errors: `0` = nothing to escalate, `2` = ESCALATE items present (the
+expected case you are here to review — do NOT treat it as a failure; the JSON is on stdout either
+way). Only `1` is an actual error.
 
 Summarize the **ESCALATE** items in plain language — under the installer model these are the
 installer-coupled files (`settings.json`, `.mcp.json`, `.gitignore`, `CLAUDE.md`,
