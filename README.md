@@ -39,6 +39,26 @@ After installation every upstream command (`/aidlc`, `/aidlc-<stage>`, `/aidlc-f
 as documented, **unnamespaced** — they are project skills, not plugin skills. Re-run
 `/aidlc-v2:aidlc` after upgrading the plugin to refresh the framework (`--check` previews).
 
+### What gets installed, and where
+
+- **The plugin is user-level; the framework is per-project.** Install the plugin once and
+  `/aidlc-v2:aidlc` is available everywhere; run it in each project that should use AI-DLC. This
+  split is upstream's architecture, not a choice: the engine's hooks and tools resolve paths under
+  the **project** root, so there is no user/global framework install. Each project carries its own
+  copy and version and upgrades independently.
+- **Footprint: ~250 files, designed to be committed.** `.claude/` (skills, agents, tools, hooks,
+  settings), `.mcp.json`, the AI-DLC `.gitignore` entries, and a seed `aidlc/` workspace. The
+  framework and workspace are version-controlled team state by design (per-user cursors and
+  machine-local runtime are already gitignored).
+- **Your existing files are never silently replaced.** On a fresh install, any existing file that
+  differs from the framework's is reported as a conflict (exit 3) and left untouched;
+  `settings.json` / `.mcp.json` / `.gitignore` are merged additively (your values win); symlinks
+  are never written through. Personal, uncommitted preferences (model, `AWS_REGION`, …) belong in
+  `.claude/settings.local.json` — the installer never touches it.
+- **There is no uninstaller.** Removing the plugin does not remove installed frameworks from
+  projects; remove the files from a repo by hand (everything the installer wrote is in your git
+  history).
+
 ### Prerequisites
 
 - **bun** (required) — the framework's tools and hooks are TypeScript run via bun:
