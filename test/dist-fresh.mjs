@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // dist-fresh.mjs — guard: the committed dist/claude/ must equal a fresh build of
-// the current src/ (+ targets/claude/ overlays). Catches the footgun where someone
-// edits src/ or the build and commits without rebuilding dist/, shipping stale
+// the current lock and authored shim. Catches the footgun where someone
+// edits the lock, authored files, or build and commits without rebuilding dist/, shipping stale
 // content. Builds to a THROWAWAY dir (via AIDLC_OUT_DIR) so the working tree is
 // never mutated, then compares file-set + bytes.
 //
@@ -68,10 +68,10 @@ for (const f of freshFiles) {
 fs.rmSync(tmp, { recursive: true, force: true });
 
 if (drift.length) {
-  console.error("FAIL: committed dist/claude is STALE — it does not match a fresh build of src/.");
+  console.error("FAIL: committed dist/claude is STALE — it does not match a fresh build of the shim.");
   console.error("Rebuild and commit it together:  node targets/claude/build.mjs && git add dist/ && git commit\n");
   for (const d of drift.slice(0, 40)) console.error("  " + d);
   if (drift.length > 40) console.error(`  … and ${drift.length - 40} more`);
   process.exit(1);
 }
-console.log(`dist/claude is fresh — matches a clean build of src/ (${committedFiles.size} files). ✓`);
+console.log(`dist/claude is fresh — matches a clean build of the shim (${committedFiles.size} files). ✓`);

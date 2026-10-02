@@ -1,145 +1,134 @@
 # Maintaining aidlc-cc-plugin-v2
 
-Reference for maintainers adopting upstream snapshots and cutting releases. The README covers what
-the plugin is and how to install/use it; this covers **how it's built, verified, and released**.
-`CLAUDE.md` is the terse agent-facing rule list; the authoritative source for any script's behaviour
-is its header comment + `.design/`.
+Reference for maintainers adopting upstream releases and cutting plugin releases. The README
+covers what the plugin is and how to use it; this covers **how it's built, verified, and
+released**. `CLAUDE.md` is the terse agent-facing rule list; the authoritative description of the
+design is `.design/upstream-installer-shim.md`, and each script's header comment is authoritative
+for its behavior.
 
-## The build model
+## The model
 
-`src/` is a pristine, vendored mirror of **upstream's built `dist/claude`** (its own Claude Code
-target: `.claude/` framework + `.mcp.json` + `.gitignore` + seed `aidlc/` workspace) at the SHA in
-`UPSTREAM.lock` — normally a `v2.x` release-tag commit on upstream's `v2` branch. The plugin that
-ships is the **built** `dist/claude/`, produced by `targets/claude/build.mjs`:
+Since 2.10.0 the plugin ships **no upstream code**. It is a shim over upstream's own lifecycle
+tools, pinned to one upstream release:
 
-- `dist/claude/framework/` — `src/` **verbatim** (postcondition-asserted byte-identical);
-- `dist/claude/skills/aidlc/` + `dist/claude/installer/` — the authored surface
-  (`targets/claude/plugin/`): the `/aidlc-v2:aidlc` entry skill and the bun installer;
-- `dist/claude/.claude-plugin/plugin.json` — generated from `package.json`.
+- `UPSTREAM.lock` pins the release: tag, peeled commit, release date, signer workflow, and the
+  SHA-256 of `install.sh`, `install.ps1`, and `checksums.txt`.
+- `targets/claude/build.mjs` turns the lock + authored files into `dist/claude/`:
+  the entry skill, the helper `scripts/aidlc-v2.sh`, `data/pins.env` (generated from the lock),
+  and the legacy-migration data.
+- At run time the helper installs upstream's `aidlc` CLI only if it is missing (verifying the
+  installer against the pinned hash), pins the project with `aidlc config --pin`, migrates
+  projects set up by our 2.1.x releases, and runs `aidlc config --harness claude` after a
+  conflict-checking dry run.
 
-This is the **installer model**: upstream's engine requires living at `<project>/.claude/` (its
-hooks/tools join framework paths under the project dir; its `doctor` prescribes the copy), so we
-ship it untouched and install it, rather than patching it to run in place. All plugin-specific
-engineering lives in `targets/claude/`; **never hand-edit `src/` or `dist/`** (rebuild instead).
-`dist/` is committed and must always equal a fresh build — enforced by the freshness guard, a
-pre-commit hook (`git config core.hooksPath .githooks`), and CI.
+`dist/` is committed and must always equal a fresh build — enforced by `test/dist-fresh.mjs`, the
+pre-commit hook (`git config core.hooksPath .githooks`), and CI. **Never hand-edit `dist/`.**
 
-## Syncing from upstream (the full pipeline)
+## Adopting an upstream release
 
 ```bash
-# find the newest upstream release tag and its peeled commit:
-git ls-remote https://github.com/awslabs/aidlc-workflows.git 'refs/tags/v2.*'
-./targets/claude/sync-upstream.sh <peeled-tag-commit-sha>
+./targets/claude/sync-upstream.sh v2.11.0
 ```
 
-This runs **T1 diff-triage**, sparse-checkouts upstream `dist/claude` at the SHA, replaces local
-`src/`, rebuilds `dist/`, runs the **build contract (T0)**, and rewrites `UPSTREAM.lock` **only on
-a clean build**. It does **not** commit. Then: review, set the version (mirror upstream's), commit,
-tag. Stage with **`git add --force -A src`** — the vendored `src/.gitignore` matches files upstream
-ships force-added (e.g. `aidlc/active-space`); a plain `git add` silently drops them on first sync
-(the sync script prints the affected files; `tag-release.sh` catches the resulting skew at release).
+Upstream cuts stable releases (`vX.Y.Z`) and previews (`vX.Y.Z-preview.YYYYMMDD.N`) from `main`.
+Adopt stable releases; previews require `--allow-preview` and are signed by a different workflow.
 
-> Pin **tag commits**, not the `v2` branch tip: the tip is unreleased and upstream has force-pushed
-> the branch before. `main` is the v1 line — v2 may never merge there.
+The script verifies, in order, and stops at the first failure:
 
-### T1 — diff triage
+1. `install.sh`, `install.ps1`, and `version.json` match the release's `checksums.txt`;
+2. `version.json` names this exact version and `refs/tags/<tag>`;
+3. the tag's peeled commit (`git ls-remote`) equals `version.json`'s `sourceDigest`;
+4. both installers carry a valid Sigstore attestation from upstream's release workflow
+   (`gh attestation verify`, using `gh`'s own login; `SKIP_ATTESTATION=1` bypasses with a warning
+   that is recorded in the lock's `SYNCED_NOTE`, and `tag-release.sh` then refuses to tag).
 
-`sync-triage.mjs` classifies every changed file before adoption. Under the installer model the
-payload ships byte-identical, so there is no transform whose coverage T1 must prove; its value is
-surfacing the files OUR installer/docs are semantically coupled to:
+Then it rewrites `UPSTREAM.lock`, sets the plugin version in `package.json` and
+`.claude-plugin/marketplace.json` to mirror the adopted release, and rebuilds. It never commits.
+`--reverify` re-runs every check for the currently pinned tag (and fails if upstream's
+`checksums.txt` changed since it was pinned) without changing the pin. Next:
 
-- **AUTO** — shipped verbatim; no plugin-side obligations (upstream owns and tests the content —
-  read upstream's CHANGELOG for meaning). The bulk of any release.
-- **CONTRACT** — structural change T0 provably hard-fails on (root/children set, hook set, entry
-  skill, version constant, compiled data). The build is the gate; triage just flags it.
-- **ESCALATE** — a change on an **installer-coupled** file whose semantics T0 can't assert:
-  `settings.json`, `.mcp.json`, `.gitignore`, `CLAUDE.md`, `settings.local.json.example`,
-  `aidlc-version.ts`. Review the installer's merge rules and the README's claims.
+1. Add a `CHANGELOG.md` entry.
+2. Read upstream's changelog for the range. Anything that touches `aidlc config` flags, exit
+   codes, the hook command shape, the stamp file, or install locations can break the helper —
+   that's what the release gate below exercises.
+3. `npm test`, then `npm run gate`. Commit, then `npm run tag`.
 
-It also emits **`smoke.advised`** (JSON: `smoke: {advised, reasons}`) when the engine control
-surface (hooks/, tools/, protocols/, settings.json) changed — the deterministic signal to run the
-billable T2a load smoke and read upstream's changelog with extra care before releasing.
-`SKIP_TRIAGE=1` to bypass; `npm run triage -- <sha> --repo <clone>` standalone.
+## Verification
 
-### Versioning & release tags
+### `npm test` — free and deterministic (every change, CI)
 
-**The plugin version mirrors upstream's framework version** (the `AIDLC_VERSION` constant in the
-payload): plugin `2.1.4` ships upstream `v2.1.4`; a plugin-only fix on the same payload is
-`2.1.4-p1`. The build **fails** on any other version. `package.json` is the source of truth;
-`.claude-plugin/marketplace.json` must be bumped to match (also enforced). Add a `CHANGELOG.md`
-entry per release.
+1. **`test/drift-injection.mjs`** — every build-contract gate provably fails on the drift it
+   guards (bad lock field, version not mirroring, malformed legacy manifest, skill not invoking the
+   helper, helper failing `sh -n`, …), a rejecting `claude plugin validate` fails the build, and
+   two builds are byte-identical.
+2. **`test/shim.test.mjs`** — the helper against a fake release (`file://`) and a stub `aidlc`
+   that logs every call: the installer is hash-checked before it runs and never gets `--profile`;
+   an existing CLI is used, an old one is refused; legacy migration removes exactly the pristine
+   2.1.4 files, keeps modified files, never follows symlinks, never touches `aidlc/`, and undoes
+   the `.gitignore` append exactly; conflicts exit 3 and `--force` never appears; the call order is
+   pin → dry run → config → doctor; the Windows path runs `install.ps1` through PowerShell.
+3. **`test/dist-fresh.mjs`** — committed `dist/claude/` equals a fresh build.
 
-`npm run tag` mints an annotated tag `v<version>+up.<upstream-short-sha>` (e.g.
-`v2.1.4+up.b61e0ed`). The `+up.<short>` is SemVer **build metadata** — a provenance *label*, not
-version identity (never publish two releases differing only after `+`). The full upstream SHA +
-tree hash go in the tag *message*; the tag script verifies the **committed** `src/` tree equals the
-lock's hash before minting. Git tags aren't inherently immutable — **protect the tag on the remote**.
+### `npm run gate` — the real pinned release (before every release; needs network)
 
-The **`release-upstream` skill** (`.claude/skills/`, repo-only, not shipped) drives this pipeline
-interactively and stops before pushing.
+Installs the pinned release into throwaway `AIDLC_INSTALL_ROOT`/`AIDLC_BIN_DIR` directories (your
+own `aidlc` install is never touched) and runs the helper end to end:
 
-## Verification tiers
+- a fresh project → upstream's `aidlc doctor` reports 0 failed, and `.aidlc-version` is the pin;
+- a project exactly as our 2.1.4 release left it (rebuilt from the `v2.1.4+up.b61e0ed` tag) →
+  migrated and configured → doctor 0 failed, workspace memory unchanged;
+- the machine-active CLI version is the same before and after pinning.
 
-### T0 — build contract (free, every build)
-
-`build.mjs` asserts everything the installer and docs depend on. **When a contract check fails**,
-the message names what changed; map it to the fix (always in `targets/claude/`, never `src/`):
-
-| Failure | What upstream did | Fix |
-|---|---|---|
-| `src/ top-level … expected exactly […]` | added/renamed/removed a root entry | update `REQUIRED_SRC_ROOT` **and** the installer's placement rules |
-| `src/.claude children … expected exactly […]` | changed the framework layout | update `REQUIRED_CLAUDE_CHILDREN`; review the installer |
-| `settings.json has unknown top-level key(s)` | added configuration | extend `SETTINGS_KNOWN_KEYS` **and** `mergeSettings()` in the installer |
-| `hook command … does not match the expected shape` | changed hook invocation | update `HOOK_CMD_RE`; re-check README permissions guidance |
-| `hooks/*.ts […] != scripts referenced by settings.json` | added/removed/rewired a hook | review the wiring, then update the check if legitimate |
-| `unknown MCP server(s)` | added an MCP server | document its credentials story in README, extend `MCP_KNOWN_SERVERS` |
-| `.gitignore no longer contains the marker` | reworded the AI-DLC block header | update `GITIGNORE_BLOCK_MARKER` + the installer together |
-| `cannot parse AIDLC_VERSION` | moved/renamed the version constant | update `frameworkVersion()` (build) + `readVersion()` (installer) |
-| `entry skill …/SKILL.md missing` / `has no SKILL.md` / `catalogue shrank` | restructured the skill catalogue | verify intent, adjust `REQUIRED_FRAMEWORK_SKILLS` / floors |
-| `cannot parse compiled data` | moved/broke compiled engine data | investigate — the installed engine would be dead |
-| `framework/ … differs from src/` | (our bug) the build mutated the payload | fix the build; the payload must ship verbatim |
-| `plugin version does not mirror framework version` | new upstream version adopted | set `package.json` + `marketplace.json` to the framework version |
-| `marketplace.json version != package.json` | versions drifted | bump both to match |
-
-Then rebuild; if mid-sync, re-run `sync-upstream.sh` (the lock was left untouched on failure).
-
-### `npm test` — the free deterministic suite (every change)
-
-Four suites, no network, no LLM:
-
-1. **`test/drift-injection.mjs`** — meta-test: every T0 gate above provably fails on its target
-   drift (+ a fake-`claude` check that the validate gate is wired, + build idempotency).
-2. **`test/triage.test.mjs`** — meta-test: T1 buckets every change kind correctly and the smoke
-   advisory fires (only) on control-surface changes.
-3. **`test/installer.test.mjs`** — **the keystone**: installs the committed payload into a scratch
-   project with the real installer, then runs **upstream's own `doctor`** and requires 0 failures;
-   also proves idempotency, `--check` write-freedom, additive merging into pre-existing
-   `settings.json`/`.mcp.json`/`.gitignore` (user values always preserved), the fresh-install
-   **conflict** policy (a pre-existing differing file is never overwritten — reported, exit 3),
-   update-mode refresh with every differing overwrite listed, **symlink write-refusal** (file and
-   directory symlinks; nothing outside the project is touched), and the self-install guard.
-   Requires `bun` (SKIPs without it; `AIDLC_REQUIRE_INSTALLER_TEST=1` to hard-require).
-4. **`test/dist-fresh.mjs`** — committed `dist/claude/` == a fresh build of `src/`.
-
-The build additionally runs **`claude plugin validate`** when the CLI is resolvable
-(`CLAUDE_BIN`/PATH; WARN-skip if absent, `AIDLC_REQUIRE_CLAUDE_VALIDATE=1` to require) and a **bun
-parse check** on the installer (WARN-skip; `AIDLC_REQUIRE_BUN_CHECK=1`).
+This is the test that catches upstream changing behavior the helper depends on.
 
 ### T2a — load smoke (billable; opt-in)
 
-`npm run smoke` runs the built plugin under `claude -p` (one ~1-turn call) and asserts the plugin
-loads with no `plugin_errors` and exposes **exactly** the installer surface: the `aidlc-v2:aidlc`
-entry skill, **no** leaked framework skills (`aidlc-v2:aidlc-*` would mean the payload got scanned
-as plugin content), and no plugin agents. Run it when T1's `smoke.advised` fires or before a
-release. `sync-upstream.sh` runs it only with `RUN_SMOKE=1`. Skips cleanly without the `claude`
-CLI (`AIDLC_REQUIRE_SMOKE=1` to require).
+`npm run smoke` loads the built plugin under `claude -p` (one call) and asserts it loads without
+errors and exposes exactly `aidlc-v2:aidlc`. Run before a release. Skips without the `claude` CLI
+(`AIDLC_REQUIRE_SMOKE=1` to require).
 
-### Retired tiers (history)
+### What is not covered automatically
 
-The pre-installer adapter had a T2b autonomous-workflow smoke and a T3 golden-master scorer, built
-for upstream's old `src/` layout (14 skills, Kiro-JSON agents, `aidlc-docs/` artifacts). The v2
-restructure replaced that world (compiled stage-graph + generated runners + project-tree install)
-and upstream now maintains its own engine test suite and CI — duplicating it against a verbatim
-payload adds cost, not signal. Their role is covered by `installer.test.mjs` (upstream's `doctor`
-as the behavioral oracle) + upstream's own tests. See git history (`targets/claude/score.mjs`,
-`smoke.mjs --workflow`) if they're ever worth reviving.
+- **Windows** runs only against stubs in `shim.test.mjs`. A real Windows run (Claude Code's Git
+  Bash, `install.ps1`, `aidlc.cmd`) has to be checked by hand on a Windows machine.
+
+### Support notes
+
+- **Stale rehearsal pin.** The 2.1.4 rehearsal pins a scratch copy and unpins it on exit. If the
+  helper is killed outright (e.g. `SIGKILL`), the user's `aidlc` pin registry keeps an entry for a
+  deleted temp path. It is harmless; remove it with `aidlc config --unpin --project-dir <that
+  path>` (the path is printed when the rehearsal starts).
+
+## Build-contract failures
+
+Each message names what's wrong; the fix is always in `targets/claude/` or the lock, never in
+`dist/`:
+
+| Failure | Fix |
+|---|---|
+| a lock field is missing or malformed | re-run `sync-upstream.sh` (never hand-edit the lock) |
+| plugin version does not mirror the upstream version | set `package.json` + `marketplace.json` to it (or `-pN`) |
+| marketplace version != package.json | bump both together |
+| legacy manifest line malformed / unsafe path / duplicate | regenerate it from the `v2.1.4+up.b61e0ed` tag (it should never change) |
+| entry skill missing `name: aidlc` or not invoking the helper | fix `targets/claude/plugin/skills/aidlc/SKILL.md` |
+| helper fails `sh -n` | fix `targets/claude/plugin/scripts/aidlc-v2.sh` |
+| dist file set or `pins.env` disagrees with the lock | a build bug — fix `build.mjs` |
+| `claude plugin validate` rejected | read its output; usually the manifest or skill frontmatter |
+
+## Release tags
+
+`npm run tag` mints an annotated `v<version>+up.<upstream-short-sha>` tag (e.g.
+`v2.10.0+up.2a88385`). `+up.<short>` is SemVer build metadata — a provenance label, not identity:
+never publish two releases that differ only after the `+`. The tag message carries the upstream
+tag, full commit, and installer hashes. Protect tags on the remote. The `release-upstream` skill
+(`.claude/skills/`, repo-only) drives sync → review → version → gates → commit → tag and stops
+before pushing.
+
+## History
+
+- **2.0.0-alpha.1** — transformed upstream's Kiro-shaped `src/` into a self-contained plugin.
+- **2.1.4** — vendored upstream's built `dist/claude` verbatim and installed it with our own
+  installer (upstream had no installer then).
+- **2.10.0** — upstream shipped its own installer, CLI, and lifecycle at GA; the plugin became a
+  shim over them. The earlier verification tiers (diff triage, vendored-payload contract, our own
+  installer's end-to-end test) went with the vendored payload; see git history.

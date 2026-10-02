@@ -4,14 +4,14 @@
     "name": "ijin"
   },
   "metadata": {
-    "description": "AI-DLC v2 — installer plugin shipping upstream awslabs/aidlc-workflows Claude Code target at pinned releases"
+    "description": "Sets up and updates AI-DLC via upstream’s installer, pinned and verified."
   },
   "plugins": [
     {
       "name": "aidlc-v2",
       "source": "./dist/claude",
-      "description": "AI-DLC v2 for Claude Code — installer plugin for the AI-Driven Development Lifecycle. Ships awslabs/aidlc-workflows own Claude Code target (verbatim, at a pinned release) and installs/updates it in your project via /aidlc-v2:aidlc.",
-      "version": "2.1.4",
+      "description": "Sets up and updates AI-DLC via upstream’s installer, pinned and verified.",
+      "version": "2.10.0",
       "author": {
         "name": "ijin"
       },

@@ -1,5 +1,8 @@
 # AI-DLC v2 — sync verification architecture (Q1/Q2/Q3)
 
+> **Superseded again (2.10.0).** Upstream now ships its own installer and lifecycle; the plugin
+> became a shim over them and vendors nothing. Current design: `upstream-installer-shim.md`.
+>
 > **Historical note (2.1.4 re-target).** This doc describes the verification architecture for the
 > ORIGINAL adapter, built when upstream v2 was a tagless dev branch (`v2-evaluator`) with a Kiro-
 > shaped `src/` layout. Upstream has since restructured (one core, N harnesses; it builds its own

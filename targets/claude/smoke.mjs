@@ -6,15 +6,11 @@
 //
 //   - plugin aidlc-v2 present and error-free in system/init
 //   - the entry skill aidlc-v2:aidlc is listed
-//   - NO framework content leaked into the plugin surface (the payload under
-//     framework/ must not be scanned as plugin skills/agents — the plugin ships
-//     exactly ONE skill and zero agents; the framework's 38 skills belong to the
-//     user's project AFTER installation, not to the plugin)
+//   - exactly one plugin skill, aidlc-v2:aidlc, and no plugin agents
 //   - the run completes without error
 //
-// This is deliberately small: the plugin is an INSTALLER; the framework's own
-// behavior is upstream-tested, and our free deterministic gate for the installed
-// tree is test/installer.test.mjs (install → upstream doctor). This smoke exists
+// The installed project's behavior is covered by test/release-gate.mjs.
+// This smoke exists
 // to catch "the plugin won't load / exposes the wrong surface", which no
 // filesystem check can prove. It makes ONE billable LLM call — opt-in, not part
 // of `npm test`.
@@ -93,7 +89,7 @@ const resultEvent = (events) => [...events].reverse().find((e) => e.type === "re
 
 // ---------- T2a: load smoke ----------
 function loadSmoke() {
-  console.log("\nT2a — load smoke (plugin loads & exposes exactly the installer surface):");
+  console.log("\nT2a — load smoke (plugin loads & exposes exactly one skill and no agents):");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aidlc-smoke-"));
   try {
     const { code, events, err, timedOut } = runClaude("Reply with the single word: ok", tmp, ["--max-turns", "1"]);
@@ -115,15 +111,12 @@ function loadSmoke() {
     const skills = (init.skills || []).map(nameOf);
     check(skills.includes(`${PLUGIN}:aidlc`), `entry skill ${PLUGIN}:aidlc present`,
       `aidlc-v2 skills seen: ${skills.filter((s) => s.startsWith(PLUGIN + ":")).join(", ") || "(none)"}`);
-    // No framework leak: the payload's 38 skills (aidlc-feature, aidlc-mvp, …)
-    // must NOT appear as plugin skills — they live under framework/, which the
-    // plugin loader must not scan. A leak means the payload landed in a scanned
-    // location and users would get 38 broken pre-install commands.
+    // The plugin exposes its setup skill only; project skills come from upstream.
     const leaked = skills.filter((s) => s.startsWith(`${PLUGIN}:aidlc-`));
-    check(leaked.length === 0, "no framework skills leaked into the plugin surface", leaked.join(", "));
+    check(leaked.length === 0, "no extra aidlc-v2:aidlc-* skills", leaked.join(", "));
     // The plugin ships no agents of its own.
     const agents = (init.agents || []).map(nameOf).filter((a) => a.startsWith(`${PLUGIN}:`));
-    check(agents.length === 0, "no plugin agents (installer ships none)", agents.join(", "));
+    check(agents.length === 0, "no plugin agents (the shim ships none)", agents.join(", "));
 
     // Run completed without error.
     const res = resultEvent(events);

@@ -1,18 +1,27 @@
 # AI-DLC Claude Code Plugin — v2
 
-A [Claude Code](https://claude.com/claude-code) **installer plugin** for the **v2** rewrite of the
+A [Claude Code](https://claude.com/claude-code) plugin that sets up the
 [AWS AI-DLC Workflows](https://github.com/awslabs/aidlc-workflows) methodology — a structured,
-adaptive, agent-orchestrated software development lifecycle.
+adaptive, agent-orchestrated software development lifecycle — in your projects, with one command.
 
-> **What this plugin is.** Upstream v2 builds its own Claude Code target (`dist/claude`: a
-> `.claude/` framework tree + `.mcp.json` + a committed `aidlc/` workspace) and releases it via
-> `v2.x` git tags — but offers no marketplace presence, no install command, and no update story
-> beyond "copy the tree into your repo". This plugin is the **distribution, verification, and
-> upgrade layer**: it ships upstream's tree **verbatim** at a pinned, reviewed release, and its one
-> skill installs/updates it into your project safely (merging your existing `settings.json`,
-> `.mcp.json`, `.gitignore`; pre-existing files that differ are surfaced as conflicts, never
-> silently replaced; symlinks are never written through). If upstream ever ships its own plugin,
-> this repo's job is done.
+> **What this plugin is.** Upstream ships AI-DLC v2 with its own installer and an `aidlc` CLI that
+> configures each project (`aidlc config --harness claude`). This plugin drives those official
+> tools from inside Claude Code, **pinned to an upstream release this repo has verified**, and
+> handles the cases upstream's tools refuse or get wrong:
+>
+> - **Existing Claude Code configuration.** Upstream refuses to configure a project whose
+>   `.claude/settings.json` or `.claude/CLAUDE.md` differ from its own — and its `--force`
+>   silently replaces your `CLAUDE.md` and drops your own `permissions`. The plugin shows the
+>   conflicts and never forces.
+> - **Projects set up by this plugin's 2.1.4 release.** Upstream's `aidlc config` cannot upgrade
+>   them. The plugin removes exactly the old framework files you never modified, keeps your
+>   `aidlc/` workspace and anything you changed, then hands the project to upstream.
+> - **Version pinning without side effects.** Each project is pinned to the plugin's version with
+>   upstream's own per-project pin; your machine-wide `aidlc` CLI is never re-pointed.
+>
+> The plugin ships no AI-DLC code itself. If you're happy running upstream's installer and
+> `aidlc config` by hand, you don't need it — see upstream's
+> [Getting Started](https://github.com/awslabs/aidlc-workflows/blob/main/docs/guide/01-getting-started.md).
 
 ## Install & use
 
@@ -24,154 +33,117 @@ adaptive, agent-orchestrated software development lifecycle.
 Then, **in the project where you want AI-DLC**:
 
 ```
-/aidlc-v2:aidlc            # installs (or updates) the framework into the project
+/aidlc-v2:aidlc              # preview, confirm, then set up (or update) this project
+/aidlc-v2:aidlc --check      # preview only — changes nothing
+/aidlc-v2:aidlc --mcp none   # set up without upstream's optional MCP servers
 ```
 
-Restart the Claude Code session (the installed `.claude/settings.json` — hooks, permissions,
-model defaults — loads at session start), then use AI-DLC exactly as upstream documents it:
+The command always shows a read-only plan first and asks before changing anything. When it
+finishes, **restart the Claude Code session** (the project's hooks load at session start) and use
+AI-DLC exactly as upstream documents it:
 
 ```
 /aidlc Build a URL shortener service    # scope auto-detected
-/aidlc --doctor                         # validate the install
+/aidlc --doctor                         # validate the setup
 ```
 
-After installation every upstream command (`/aidlc`, `/aidlc-<stage>`, `/aidlc-feature`, …) works
-as documented, **unnamespaced** — they are project skills, not plugin skills. Re-run
-`/aidlc-v2:aidlc` after upgrading the plugin to refresh the framework (`--check` previews).
+Commit `.aidlc-version`, `.claude/`, and `aidlc/` — they are designed to be shared with your team.
 
-### What gets installed, and where
+### What it does, and where things go
 
-- **The plugin is user-level; the framework is per-project.** Install the plugin once and
-  `/aidlc-v2:aidlc` is available everywhere; run it in each project that should use AI-DLC. This
-  split is upstream's architecture, not a choice: the engine's hooks and tools resolve paths under
-  the **project** root, so there is no user/global framework install. Each project carries its own
-  copy and version and upgrades independently.
-- **Footprint: ~250 files, designed to be committed.** `.claude/` (skills, agents, tools, hooks,
-  settings), `.mcp.json`, the AI-DLC `.gitignore` entries, and a seed `aidlc/` workspace. The
-  framework and workspace are version-controlled team state by design (per-user cursors and
-  machine-local runtime are already gitignored).
-- **Your existing files are never silently replaced.** On a fresh install, any existing file that
-  differs from the framework's is reported as a conflict (exit 3) and left untouched;
-  `settings.json` / `.mcp.json` / `.gitignore` are merged additively (your values win); symlinks
-  are never written through. Personal, uncommitted preferences (model, `AWS_REGION`, …) belong in
-  `.claude/settings.local.json` — the installer never touches it.
-- **There is no uninstaller.** Removing the plugin does not remove installed frameworks from
-  projects; remove the files from a repo by hand (everything the installer wrote is in your git
-  history).
+1. **The `aidlc` CLI.** If you don't have it, the plugin downloads the pinned release's official
+   installer, checks it against the SHA-256 recorded in this plugin, and runs it. The CLI lands
+   where upstream puts it — `~/.local/bin/aidlc` (macOS/Linux) or `%LOCALAPPDATA%\aidlc\bin`
+   (Windows) — because the project's hooks call `aidlc` from your `PATH`. Your shell startup files
+   are never edited; if that directory isn't on your `PATH`, the plugin tells you the line to add.
+   If you already have the CLI (2.8.0 or newer), it is used as-is and never updated or replaced.
+2. **The pin.** The project is pinned to the plugin's version (`aidlc config --pin`), which writes
+   `.aidlc-version` and installs that version alongside any others. Other projects, and your
+   machine-wide default, are unaffected. To follow `aidlc update` instead, run
+   `aidlc config --unpin`.
+3. **The configuration.** Upstream's `aidlc config --harness claude` writes `.claude/`, the
+   `aidlc/` workspace shell, and its managed `.gitignore` block, after a dry run the plugin checks
+   for conflicts first.
 
-### Prerequisites
+### Conflicts
 
-- **bun** (required) — the framework's tools and hooks are TypeScript run via bun:
-  `curl -fsSL https://bun.sh/install | bash` (must be on PATH for non-interactive shells).
-- **AWS Bedrock access** (upstream's shipped default) — the installed `settings.json` defaults to
-  Opus via Bedrock. Not on Bedrock? Override in `.claude/settings.local.json` (copy the shipped
-  `.example`); the installer never overrides model/env values you already set.
-- **uv/uvx + AWS credentials** (optional) — four of the five shipped MCP servers launch via `uvx`
-  and use your AWS credential chain. Servers you lack credentials for are simply unavailable and
-  never block a workflow.
+If upstream reports conflicts — typically your own `.claude/settings.json` or `.claude/CLAUDE.md`
+— the plugin stops before changing your project's files (it checks with a dry run first, and for
+2.1.4 projects rehearses the whole migration on a scratch copy), and puts back the project's
+previous pin. Move the named files aside, run `/aidlc-v2:aidlc` again, and copy back anything you
+still need (for example, your own `permissions` entries into the new `settings.json`). The plugin
+never uses `aidlc config --force`.
 
-### Why an installer (not a self-contained plugin)?
+### Updating and removing
 
-Upstream's engine requires living at `<project>/.claude/` — its hooks and tools resolve framework
-paths under the project root, its method rules import from the project's `aidlc/` workspace, and
-its own `doctor` prescribes exactly that layout. Running it from a plugin directory would mean
-forking upstream code on every sync. Installing it verbatim means zero patches and full fidelity;
-the plugin's own footprint stays one skill + one installer script.
+- **Update a project:** upgrade the plugin, then run `/aidlc-v2:aidlc` in the project again.
+  Upstream refuses to refresh a project while a workflow is in progress — finish or park it first.
+- **Remove:** use upstream's `aidlc uninstall`, then uninstall the plugin. Uninstalling the plugin
+  alone leaves your projects and CLI untouched.
+
+### Requirements
+
+- macOS, Linux, or Windows (Claude Code's Git Bash).
+- `curl` or `wget`, and `sha256sum` or `shasum` (present on standard systems).
+- A model provider for Claude Code. Upstream's config keeps whatever provider Claude Code already
+  uses; see upstream's guide for Amazon Bedrock options.
+- Optional: the MCP servers added by default include AWS servers launched with `uvx` and your AWS
+  credentials. Servers you lack credentials for are simply unavailable; pass `--mcp none` to skip
+  them entirely.
 
 ## How this relates to v1
 
-| | v1 (`aidlc`) | v2 (`aidlc-v2`, this repo) |
-|---|---|---|
-| Upstream source | `aidlc-rules/*.md`, by tag (main line) | upstream's built `dist/claude`, by `v2.x` release tag |
-| Delivery | self-contained plugin | installer — framework lives in your project after `/aidlc-v2:aidlc` |
-| Entry point | `/aidlc:start` | `/aidlc` (installed; `/aidlc-v2:aidlc` only installs/updates) |
-
-Both can be installed at once.
+Upstream's v1 now lives on its `v1` branch; the separate
+[`ijin/aidlc-cc-plugin`](https://github.com/ijin/aidlc-cc-plugin) plugin packages it. Both plugins
+can be installed at once.
 
 ## Architecture of this repo
 
 ```
-src/                      # vendored snapshot of awslabs/aidlc-workflows:<sha>/dist/claude (pristine mirror)
-  .claude/                #   the framework: skills, agents, tools (TS/bun), hooks, knowledge, settings.json
-  .mcp.json  .gitignore   #   project-root files upstream ships
-  aidlc/                  #   seed workspace (memory/method files)
-UPSTREAM.lock             # exact upstream repo/branch/SHA + tree hash that src/ was vendored from
+UPSTREAM.lock             # the pinned upstream release: tag, commit, installer + checksums hashes
 targets/claude/
-  build.mjs               # builds dist/claude/: verbatim framework/ payload + authored surface; enforces the upstream-shape contract
-  plugin/                 # authored plugin surface: skills/aidlc/SKILL.md (entry skill) + installer/aidlc-install.ts
-  sync-upstream.sh        # refreshes src/ from an explicit upstream SHA, rebuilds, rewrites UPSTREAM.lock
-  sync-triage.mjs         # T1: classifies an upstream diff (AUTO / CONTRACT / ESCALATE) before adoption
-  smoke.mjs               # T2a: headless load smoke — plugin loads & exposes exactly the installer surface (billable, opt-in)
-  tag-release.sh          # mints an annotated release tag v<version>+up.<upstream-short-sha>
+  build.mjs               # builds dist/claude/ from the lock + authored files; enforces the contract
+  plugin/
+    skills/aidlc/SKILL.md #   the entry skill (/aidlc-v2:aidlc)
+    scripts/aidlc-v2.sh   #   the helper: plan/apply (POSIX sh)
+    data/                 #   hash manifest of the 2.1.4 framework files + the .gitignore block 2.1.4 appended
+  sync-upstream.sh        # adopt a release tag: verify checksums + signed provenance, rewrite the lock
+  tag-release.sh          # annotated release tag v<version>+up.<upstream-short-sha>
+  smoke.mjs               # T2a load smoke (billable, opt-in)
 test/
-  drift-injection.mjs     # meta-test: each contract gate fails on its target drift + idempotency
-  triage.test.mjs         # meta-test: T1 triage buckets every change kind correctly
-  installer.test.mjs      # end-to-end: install into a scratch project → upstream's own doctor passes (free, deterministic)
-  dist-fresh.mjs          # guard: committed dist/claude == a fresh build of src/
-dist/claude/              # built, committed plugin — what the marketplace installs
-  .claude-plugin/plugin.json
-  skills/aidlc/           #   the entry skill (/aidlc-v2:aidlc)
-  installer/              #   aidlc-install.ts (bun)
-  framework/              #   upstream's dist/claude, byte-identical to src/
-.claude-plugin/marketplace.json   # marketplace manifest (points at ./dist/claude)
+  drift-injection.mjs     # each build-contract gate fails on its target drift
+  shim.test.mjs           # helper behavior against a fake release + stub CLI (free, deterministic)
+  release-gate.mjs        # the real pinned release in a sandbox: fresh + legacy projects → doctor (network)
+  dist-fresh.mjs          # committed dist/claude == a fresh build
+dist/claude/              # the built, committed plugin — what the marketplace installs
+.claude-plugin/marketplace.json
 ```
 
-`src/` is kept pristine (a pure mirror of upstream at the pinned SHA); everything Claude-plugin-
-specific lives in `targets/claude/`.
+The plugin's version mirrors the pinned upstream release (`2.10.0`; plugin-only fixes are
+`2.10.0-pN`). Release tags add provenance (`v2.10.0+up.<short-sha>`), with the full commit and the
+installer hashes in the tag message and in `UPSTREAM.lock`.
 
-### The upstream-shape contract
-
-The build asserts, loudly, everything the installer and docs depend on — before producing output
-(preconditions on `src/`) and after (postconditions on `dist/`):
-
-- exact top-level set (`.claude`, `.mcp.json`, `.gitignore`, `aidlc`) and exact `.claude` children;
-- `settings.json` key allowlist + strict hook-command shapes + hook-file set == referenced set;
-- `.mcp.json` server allowlist (a new server = a new credentials story to document);
-- the `.gitignore` AI-DLC block marker the installer appends by;
-- the framework version constant (plugin version must mirror it: `2.1.4` or `2.1.4-pN`);
-- entry-skill presence, per-skill `SKILL.md`, catalogue count floors, compiled stage-graph parses;
-- `framework/` in dist is **byte-identical** to `src/`; the authored surface exists and invokes the
-  installer; `claude plugin validate` passes.
-
-Versioning **mirrors upstream**: plugin `2.1.4` ships upstream `v2.1.4`; release tags append
-provenance (`v2.1.4+up.<short-sha>`), with the full SHA + tree hash in the tag message and in
-`UPSTREAM.lock`.
-
-## Syncing from upstream
-
-Upstream cuts `v2.x` release tags from its `v2` dev branch (`main` is the v1 line). This repo
-vendors a *pinned snapshot* of upstream's `dist/claude` at a **tag commit** (recorded in
-[`UPSTREAM.lock`](UPSTREAM.lock)) and refreshes it on demand, with a human reviewing every
-snapshot. The mechanics are automated; the decision to adopt is not.
-
-> **Guided release:** the `release-upstream` skill (`.claude/skills/`, repo-only — not shipped)
-> drives the pipeline — sync → review triage escalations → set the version to upstream's → build →
-> run the gates → commit + tag locally — and **stops before pushing**.
+## Adopting a new upstream release
 
 ```bash
-# Pin an upstream release-tag commit (recommended):
-git ls-remote https://github.com/awslabs/aidlc-workflows.git 'refs/tags/v2.*'
-./targets/claude/sync-upstream.sh <peeled-tag-commit-sha>
+./targets/claude/sync-upstream.sh v2.11.0     # stable tags only, unless --allow-preview
 ```
 
-The script sparse-checkouts upstream's `dist/claude` at that commit, runs the T1 diff-triage,
-rebuilds `dist/` under the contract, and — only if it all passes — rewrites `UPSTREAM.lock`. It
-**does not commit**: review, then commit by hand (stage with `git add --force -A src` — the
-vendored `src/.gitignore` matches files upstream ships force-added).
-
-The verification tiers: the free deterministic gates (`npm test`: contract drift-injection, T1
-triage meta-tests, the installer→doctor end-to-end, dist-freshness) run on every change. The T2a
-load smoke (`npm run smoke`, one billable model call) runs when T1 advises it or before a release.
-Full mechanics and the contract failure-mode table: **[MAINTAINERS.md](MAINTAINERS.md)**.
+The script downloads the release's installers, `checksums.txt`, `version.json`, and its signed
+provenance bundle; verifies the installers against the checksums, the release metadata against
+the tag and its commit, and the installers' Sigstore attestations against upstream's release
+workflow; then rewrites `UPSTREAM.lock` and rebuilds. It **does not commit** — a human reviews
+every adoption. Then: set the version to mirror, run `npm test` (free) and `npm run gate` (the
+real release, sandboxed), and tag. The guided `release-upstream` skill (repo-only) drives the
+whole flow and stops before pushing. Details: **[MAINTAINERS.md](MAINTAINERS.md)**.
 
 ## License & attribution
 
 This project is **MIT-0** (MIT No Attribution); see [LICENSE](LICENSE).
 
-The contents of `src/` (shipped verbatim as `dist/claude/framework/`) are **vendored** from
-[AWS AI-DLC Workflows](https://github.com/awslabs/aidlc-workflows) — the `dist/claude` directory
-of the `v2` branch at the exact release-tag commit pinned in [`UPSTREAM.lock`](UPSTREAM.lock) (and
-recorded in each release tag, `vX.Y.Z+up.<short-sha>`). Upstream is also MIT-0, Copyright
-Amazon.com, Inc. — attribution is not required, but is given here for provenance. The installer and
-plugin packaging (`targets/claude/`) are original to this repo. **This is an independent community
-port, not affiliated with or endorsed by Amazon / AWS.**
+The plugin downloads and runs [AWS AI-DLC Workflows](https://github.com/awslabs/aidlc-workflows)
+releases (MIT-0, Copyright Amazon.com, Inc.) from upstream's GitHub releases, verified against the
+hashes in [`UPSTREAM.lock`](UPSTREAM.lock). `targets/claude/plugin/data/` contains hashes of the
+files upstream's v2.1.4 release shipped and a verbatim excerpt of its `.gitignore`, used only to
+migrate projects set up by this plugin's 2.1.4 release. **This is an independent community
+project, not affiliated with or endorsed by Amazon / AWS.**

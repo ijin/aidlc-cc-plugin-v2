@@ -5,6 +5,9 @@
 # Portable repo rules live in the committed CLAUDE.md.
 CLAUDE.local.md
 
+# Local agent-tooling state written into .claude/ (never shipped or shared)
+/.claude/.headroom_*
+
 # OS / editor cruft
 .DS_Store
 *.swp

@@ -1,6 +1,6 @@
 {
   "name": "aidlc-cc-plugin-v2",
-  "version": "2.1.4",
+  "version": "2.10.0",
   "private": true,
   "description": "Claude Code plugin build tooling for AI-DLC v2 (alpha).",
   "license": "MIT-0",
@@ -8,10 +8,10 @@
     "build": "node targets/claude/build.mjs build",
     "build:claude": "node targets/claude/build.mjs build",
     "clean": "node targets/claude/build.mjs clean",
-    "test": "node test/drift-injection.mjs && node test/triage.test.mjs && node test/installer.test.mjs && node test/dist-fresh.mjs",
-    "triage": "node targets/claude/sync-triage.mjs",
+    "test": "node test/drift-injection.mjs && node test/shim.test.mjs && node test/dist-fresh.mjs",
     "smoke": "node targets/claude/smoke.mjs",
     "sync": "bash targets/claude/sync-upstream.sh",
-    "tag": "bash targets/claude/tag-release.sh"
+    "tag": "bash targets/claude/tag-release.sh",
+    "gate": "node test/release-gate.mjs"
   }
 }

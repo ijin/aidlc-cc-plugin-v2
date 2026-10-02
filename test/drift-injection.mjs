@@ -1,292 +1,69 @@
 #!/usr/bin/env node
-// test/drift-injection.mjs — Meta-verification: prove each build contract gate
-// actually FAILS on the upstream-drift it is meant to catch (and that a clean
-// build PASSES). Without this, a contract check could silently degrade and we'd
-// never know until a bad sync shipped.
-//
-// Strategy: copy the whole repo into a throwaway temp dir, mutate src/ (or an
-// authored/manifest file) to simulate one drift class, run the build there, and
-// assert it exits non-zero AND the output contains the expected message
-// fragment. The real repo is never mutated.
-//
-// Also runs positive checks: a clean build PASSES, and building twice yields
-// byte-identical dist/ (idempotency).
-//
-// Usage: node test/drift-injection.mjs   (exit 0 = all gates behave correctly)
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
-import { fileURLToPath } from "node:url";
-import { execFileSync, execSync } from "node:child_process";
-
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const REPO = path.resolve(SCRIPT_DIR, "..");
-
-let pass = 0;
-let fail = 0;
-const failures = [];
-
-function record(ok, name, detail) {
-  if (ok) {
-    pass++;
-    console.log(`  PASS  ${name}`);
-  } else {
-    fail++;
-    failures.push(`${name}: ${detail}`);
-    console.log(`  FAIL  ${name} — ${detail}`);
+const root = path.resolve(import.meta.dirname, '..');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aidlc-drift-'));
+let count = 0;
+const skill = 'targets/claude/plugin/skills/aidlc/SKILL.md';
+const manifest = 'targets/claude/plugin/data/legacy-2.1.4.sha256';
+const helper = 'targets/claude/plugin/scripts/aidlc-v2.sh';
+function fixture() {
+  const dir = fs.mkdtempSync(path.join(tmp,'case-'));
+  for (const rel of ['UPSTREAM.lock','package.json','.claude-plugin/marketplace.json','targets/claude/build.mjs','targets/claude/plugin']) {
+    fs.mkdirSync(path.dirname(path.join(dir,rel)),{recursive:true}); fs.cpSync(path.join(root,rel),path.join(dir,rel),{recursive:true});
   }
+  return dir;
 }
-
-// Run the build in `dir`; return {code, out}. Never throws.
-function runBuild(dir, env = {}) {
-  try {
-    const out = execFileSync("node", ["targets/claude/build.mjs", "build"], {
-      cwd: dir,
-      env: { ...process.env, ...env },
-      stdio: "pipe",
-      encoding: "utf-8",
-    });
-    return { code: 0, out };
-  } catch (e) {
-    return { code: e.status ?? 1, out: (e.stdout || "") + (e.stderr || "") };
-  }
+const change = (dir,rel,fn) => { const p=path.join(dir,rel); fs.writeFileSync(p,fn(fs.readFileSync(p,'utf8'))); };
+const lock = (dir,key,value) => change(dir,'UPSTREAM.lock',s=>s.replace(new RegExp(`^${key}=.*$`,'m'),`${key}=${value}`));
+function run(dir, command='build', env={}) {
+  return spawnSync(process.execPath,[path.join(dir,'targets/claude/build.mjs'),command],{cwd:dir,encoding:'utf8',env:{...process.env,AIDLC_OUT_DIR:path.join(dir,'dist/claude'),CLAUDE_BIN:'/nonexistent/claude',AIDLC_REQUIRE_CLAUDE_VALIDATE:'0',...env}});
 }
-
-// Make a clean throwaway copy of the repo (excluding heavy/irrelevant dirs).
-function freshCopy() {
-  const dst = fs.mkdtempSync(path.join(os.tmpdir(), "aidlc-drift-"));
-  for (const item of ["src", "targets", "package.json", ".claude-plugin", "UPSTREAM.lock"]) {
-    const s = path.join(REPO, item);
-    if (fs.existsSync(s)) fs.cpSync(s, path.join(dst, item), { recursive: true });
-  }
-  return dst;
+function test(name, mutate, pattern, afterBuild=false) {
+  const dir=fixture();
+  if(afterBuild) assert.equal(run(dir).status,0);
+  mutate(dir);
+  const r=run(dir,afterBuild?'validate':'build');
+  assert.notEqual(r.status,0,`Drift accepted: ${name}`);
+  assert.match(r.stdout+r.stderr,pattern,`Wrong gate: ${name}`);
+  count++; console.log(`PASS ${name}`);
 }
-
-function rm(d) {
-  fs.rmSync(d, { recursive: true, force: true });
+function fingerprint(dir) {
+  return fs.readdirSync(dir,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name)).flatMap(e=>e.isDirectory()?fingerprint(path.join(dir,e.name)).map(s=>e.name+'/'+s):[e.name+':'+fs.statSync(path.join(dir,e.name)).mode+':'+fs.readFileSync(path.join(dir,e.name)).toString('base64')]);
 }
-
-function editJson(file, mutate) {
-  const o = JSON.parse(fs.readFileSync(file, "utf-8"));
-  mutate(o);
-  fs.writeFileSync(file, JSON.stringify(o, null, 2) + "\n");
-}
-
-// CLAUDE_BIN points nowhere so the claude-validate gate WARN-skips (hermetic +
-// offline), and AIDLC_REQUIRE_CLAUDE_VALIDATE=0 so a release-CI parent env can't
-// turn the skip into a failure and break these structural tests.
-const HERMETIC = { CLAUDE_BIN: "/nonexistent/claude", AIDLC_REQUIRE_CLAUDE_VALIDATE: "0" };
-
-const bunAvailable = (() => {
-  try { execFileSync("bun", ["--version"], { stdio: "pipe" }); return true; }
-  catch { return false; }
-})();
-
-const CASES = [
-  {
-    name: "clean build passes",
-    mutate: () => {},
-    expectPass: true,
-  },
-  {
-    name: "unexpected top-level src/ entry → fail (exact root set)",
-    mutate: (d) => fs.writeFileSync(path.join(d, "src", "STRAY.txt"), "x"),
-    expect: "expected exactly",
-  },
-  {
-    name: "missing top-level src/.mcp.json → fail (exact root set)",
-    mutate: (d) => fs.rmSync(path.join(d, "src", ".mcp.json")),
-    expect: "expected exactly",
-  },
-  {
-    name: "unexpected .claude child → fail (exact children set)",
-    mutate: (d) => fs.mkdirSync(path.join(d, "src", ".claude", "newthing")),
-    expect: "expected exactly",
-  },
-  {
-    name: "missing .claude child (settings.local.json.example) → fail",
-    mutate: (d) => fs.rmSync(path.join(d, "src", ".claude", "settings.local.json.example")),
-    expect: "expected exactly",
-  },
-  {
-    name: "settings.json unknown top-level key → fail (installer merge would drop it)",
-    mutate: (d) => editJson(path.join(d, "src", ".claude", "settings.json"), (s) => { s.surpriseKey = {}; }),
-    expect: "unknown top-level key",
-  },
-  {
-    name: "settings.json hook command shape changed → fail",
-    mutate: (d) => editJson(path.join(d, "src", ".claude", "settings.json"), (s) => {
-      s.hooks.Stop[0].hooks[0].command = "node .claude/hooks/aidlc-stop.js";
-    }),
-    expect: "does not match the expected",
-  },
-  {
-    name: "stray unreferenced hook script → fail (exact hook set)",
-    mutate: (d) => fs.writeFileSync(path.join(d, "src", ".claude", "hooks", "aidlc-extra.ts"), "// stray\n"),
-    expect: "scripts referenced by settings.json",
-  },
-  {
-    name: "unknown MCP server → fail (undocumented credentials story)",
-    mutate: (d) => editJson(path.join(d, "src", ".mcp.json"), (m) => {
-      m.mcpServers["surprise-server"] = { command: "uvx", args: ["x"] };
-    }),
-    expect: "unknown MCP server",
-  },
-  {
-    name: ".gitignore AI-DLC marker gone → fail (installer append logic keys on it)",
-    mutate: (d) => {
-      const f = path.join(d, "src", ".gitignore");
-      fs.writeFileSync(f, fs.readFileSync(f, "utf-8").replace(/# AI-DLC —/g, "# AIDLC:"));
-    },
-    expect: "no longer contains",
-  },
-  {
-    name: "version constant unparseable → fail",
-    mutate: (d) => {
-      const f = path.join(d, "src", ".claude", "tools", "aidlc-version.ts");
-      fs.writeFileSync(f, fs.readFileSync(f, "utf-8").replace("export const AIDLC_VERSION", "export const VERSION"));
-    },
-    expect: "cannot parse AIDLC_VERSION",
-  },
-  {
-    name: "entry skill gone (skills/aidlc renamed) → fail",
-    mutate: (d) =>
-      fs.renameSync(path.join(d, "src", ".claude", "skills", "aidlc"), path.join(d, "src", ".claude", "skills", "aidlc-renamed")),
-    expect: "entry skill",
-  },
-  {
-    name: "a skill dir without SKILL.md → fail",
-    mutate: (d) => fs.rmSync(path.join(d, "src", ".claude", "skills", "aidlc-feature", "SKILL.md")),
-    expect: "has no SKILL.md",
-  },
-  {
-    name: "skill catalogue shrinks below the floor → fail",
-    mutate: (d) => {
-      const dir = path.join(d, "src", ".claude", "skills");
-      const skills = fs.readdirSync(dir).filter((s) => s !== "aidlc");
-      // Delete enough skill dirs to fall under MIN_SKILLS (30).
-      for (const s of skills.slice(0, skills.length - 25)) rm(path.join(dir, s));
-    },
-    expect: "catalogue shrank",
-  },
-  {
-    name: "compiled stage-graph.json corrupted → fail",
-    mutate: (d) => fs.writeFileSync(path.join(d, "src", ".claude", "tools", "data", "stage-graph.json"), "{not json"),
-    expect: "cannot parse compiled data",
-  },
-  {
-    name: "marketplace.json version skew → fail",
-    mutate: (d) => editJson(path.join(d, ".claude-plugin", "marketplace.json"), (m) => {
-      m.plugins[0].version = "9.9.9";
-    }),
-    expect: "marketplace.json",
-  },
-  {
-    name: "plugin version does not mirror framework version → fail",
-    mutate: (d) => {
-      editJson(path.join(d, "package.json"), (p) => { p.version = "9.9.9"; });
-      editJson(path.join(d, ".claude-plugin", "marketplace.json"), (m) => { m.plugins[0].version = "9.9.9"; });
-    },
-    expect: "does not mirror framework version",
-  },
-  {
-    name: "authored installer missing → fail",
-    mutate: (d) => fs.rmSync(path.join(d, "targets", "claude", "plugin", "installer", "aidlc-install.ts")),
-    expect: "authored plugin file missing",
-  },
-  {
-    name: "entry skill lost its installer invocation → fail",
-    mutate: (d) => {
-      const f = path.join(d, "targets", "claude", "plugin", "skills", "aidlc", "SKILL.md");
-      fs.writeFileSync(f, fs.readFileSync(f, "utf-8").replaceAll("${CLAUDE_PLUGIN_ROOT}/installer/aidlc-install.ts", "the installer"));
-    },
-    expect: "does not invoke",
-  },
-];
-
-if (bunAvailable) {
-  CASES.push({
-    name: "installer that does not parse → fail (bun syntax gate)",
-    mutate: (d) => fs.writeFileSync(
-      path.join(d, "targets", "claude", "plugin", "installer", "aidlc-install.ts"),
-      "const oops: = broken(;\n"
-    ),
-    expect: "does not parse under bun",
-  });
-} else {
-  console.log("  (skipping bun syntax-gate case — bun not on PATH)");
-}
-
-console.log("Drift-injection meta-tests (each gate must catch its target drift):");
-for (const c of CASES) {
-  const dir = freshCopy();
-  try {
-    c.mutate(dir);
-    const { code, out } = runBuild(dir, HERMETIC);
-    if (c.expectPass) {
-      record(code === 0, c.name, `expected exit 0, got ${code}\n${out.slice(0, 300)}`);
-    } else {
-      const caught = code !== 0 && out.includes(c.expect);
-      record(
-        caught,
-        c.name,
-        code === 0
-          ? "build PASSED but should have failed (gate is dead!)"
-          : `failed but message missing "${c.expect}"\n${out.slice(0, 400)}`
-      );
-    }
-  } finally {
-    rm(dir);
-  }
-}
-
-// Validate-gate wiring: a fake `claude` that REJECTS (exit 1) must fail the build.
-// Proves the claude-validate gate is actually wired, not dead.
-{
-  const dir = freshCopy();
-  const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), "fakeclaude-"));
-  const fake = path.join(fakeDir, "claude");
-  fs.writeFileSync(
-    fake,
-    '#!/usr/bin/env bash\ncase "$1" in\n  --version) echo "fake 0.0.0"; exit 0;;\n  plugin) echo "FAKE: plugin rejected" >&2; exit 1;;\nesac\nexit 0\n'
-  );
-  fs.chmodSync(fake, 0o755);
-  try {
-    const { code, out } = runBuild(dir, {
-      CLAUDE_BIN: fake,
-      AIDLC_REQUIRE_CLAUDE_VALIDATE: "0",
-    });
-    const caught = code !== 0 && out.includes("claude plugin validate");
-    record(
-      caught,
-      "claude-validate gate: rejecting CLI fails the build",
-      code === 0 ? "build PASSED but fake claude rejected (gate is dead!)" : `failed but message missing\n${out.slice(0, 300)}`
-    );
-  } finally {
-    rm(dir);
-    rm(fakeDir);
-  }
-}
-
-// Idempotency: build twice in a fresh copy, dist/ must be byte-identical.
-{
-  const dir = freshCopy();
-  try {
-    runBuild(dir, HERMETIC);
-    const h1 = execSync(`find dist/claude -type f -exec shasum {} + | sort | shasum`, { cwd: dir, encoding: "utf-8" }).trim();
-    runBuild(dir, HERMETIC);
-    const h2 = execSync(`find dist/claude -type f -exec shasum {} + | sort | shasum`, { cwd: dir, encoding: "utf-8" }).trim();
-    record(h1 === h2, "idempotency: two builds → identical dist/", `${h1} != ${h2}`);
-  } finally {
-    rm(dir);
-  }
-}
-
-console.log(`\n${pass} passed, ${fail} failed.`);
-if (fail > 0) {
-  console.error("\nGate(s) not behaving as designed:");
-  for (const f of failures) console.error(`  - ${f}`);
-  process.exit(1);
-}
-console.log("All contract gates catch their target drift. ✓");
+try {
+  const clean=fixture(); assert.equal(run(clean).status,0); count++; console.log('PASS clean build');
+  const before=fingerprint(path.join(clean,'dist')); assert.equal(run(clean).status,0); assert.deepEqual(fingerprint(path.join(clean,'dist')),before); count++; console.log('PASS build idempotency');
+  for(const key of ['UPSTREAM_REPO','UPSTREAM_TAG','UPSTREAM_VERSION','UPSTREAM_SHA','UPSTREAM_DATE','UPSTREAM_SIGNER_WORKFLOW','INSTALL_SH_SHA256','INSTALL_PS1_SHA256','CHECKSUMS_SHA256','SYNCED_NOTE']) test(`missing ${key}`,d=>change(d,'UPSTREAM.lock',s=>s.replace(new RegExp(`^${key}=.*\\n`,'m'),'')),new RegExp(key));
+  for(const [key,value,pattern] of [['UPSTREAM_REPO','https://example.com','repository'],['UPSTREAM_TAG','main','semver'],['UPSTREAM_VERSION','9.0.0','version and tag'],['UPSTREAM_SHA','abcd','40-hex'],['INSTALL_SH_SHA256','x','64-hex'],['INSTALL_PS1_SHA256','x','64-hex'],['CHECKSUMS_SHA256','x','64-hex'],['UPSTREAM_DATE','2026-02-30','ISO'],['UPSTREAM_SIGNER_WORKFLOW','evil/workflow.yml','signer workflow']]) test(`invalid ${key}`,d=>lock(d,key,value),new RegExp(pattern));
+  test('semver leading zero',d=>lock(d,'UPSTREAM_TAG','v02.10.0'),/semver/);
+  test('duplicate lock field',d=>change(d,'UPSTREAM.lock',s=>s+'UPSTREAM_TAG=v2.10.0\n'),/duplicate lock/);
+  test('package version mismatch',d=>change(d,'package.json',s=>s.replace('2.10.0','2.9.0')),/package.json version/);
+  test('marketplace version mismatch',d=>change(d,'.claude-plugin/marketplace.json',s=>s.replace('2.10.0','2.9.0')),/marketplace plugin version/);
+  const patch=fixture(); for(const rel of ['package.json','.claude-plugin/marketplace.json']) change(patch,rel,s=>s.replace('2.10.0','2.10.0-p1')); assert.equal(run(patch).status,0); count++; console.log('PASS plugin patch version');
+  for(const rel of [skill,helper,manifest,'targets/claude/plugin/data/legacy-2.1.4.gitignore-block']) test(`missing ${rel}`,d=>fs.unlinkSync(path.join(d,rel)),/Restore authored file/);
+  test('skill name',d=>change(d,skill,s=>s.replace('name: aidlc','name: wrong')),/name: aidlc/);
+  for(const mode of ['plan','apply']) test(`skill ${mode} command`,d=>change(d,skill,s=>s.replace(`aidlc-v2.sh" ${mode}`,`aidlc-v2.sh" wrong`)),new RegExp(`helper ${mode}`));
+  test('malformed manifest',d=>change(d,manifest,s=>s.replace(/^[a-f0-9]/,'z')),/valid sha256/);
+  test('CR manifest',d=>change(d,manifest,s=>s.replace('.claude/', '.claude/\r')),/valid sha256/);
+  test('dist CR byte',d=>change(d,'dist/claude/skills/aidlc/SKILL.md',s=>s+'\r'),/Remove CR bytes/,true);
+  test('NUL manifest',d=>change(d,manifest,s=>s.replace('.claude/', '.claude/\0')),/valid sha256/);
+  test('absolute manifest',d=>change(d,manifest,s=>s.replace('.claude/', '/.claude/')),/valid sha256/);
+  test('parent manifest',d=>change(d,manifest,s=>s.replace('.claude/', '.claude/../')),/unsafe paths/);
+  test('duplicate manifest',d=>change(d,manifest,s=>s+s.split('\n')[0]+'\n'),/duplicate legacy/);
+  test('manifest floor',d=>change(d,manifest,s=>s.split('\n').slice(0,199).join('\n')+'\n'),/at least 200/);
+  test('empty block',d=>change(d,'targets/claude/plugin/data/legacy-2.1.4.gitignore-block',()=>''),/gitignore block/);
+  test('wrong block marker',d=>change(d,'targets/claude/plugin/data/legacy-2.1.4.gitignore-block',s=>'wrong'+s),/gitignore block/);
+  test('shell syntax',d=>change(d,helper,s=>s+'\nif\n'),/shell syntax/);
+  test('dist extra file',d=>fs.writeFileSync(path.join(d,'dist/claude/extra'),'drift'),/exactly the shim file set/,true);
+  test('dist missing file',d=>fs.unlinkSync(path.join(d,'dist/claude/scripts/aidlc-v2.sh')),/exactly the shim file set/,true);
+  test('dist pins drift',d=>change(d,'dist/claude/data/pins.env',s=>s.replace('2.10.0','2.9.0')),/pins.env/,true);
+  test('dist JSON parse',d=>change(d,'dist/claude/.claude-plugin/plugin.json',()=>'{broken'),/JSON|Expected|property/,true);
+  const rejected=fixture(); const fake=path.join(rejected,'claude'); fs.writeFileSync(fake,'#!/bin/sh\necho rejected\nexit 1\n',{mode:0o755}); assert.notEqual(run(rejected,'build',{CLAUDE_BIN:fake}).status,0); count++; console.log('PASS rejecting Claude CLI');
+  const required=fixture(); const r=run(required,'build',{AIDLC_REQUIRE_CLAUDE_VALIDATE:'1'}); assert.notEqual(r.status,0); assert.match(r.stderr,/Install Claude CLI/); count++; console.log('PASS required absent Claude CLI');
+  console.log(`Drift tests: ${count} passed, 0 failed.`);
+} finally { fs.rmSync(tmp,{recursive:true,force:true}); }

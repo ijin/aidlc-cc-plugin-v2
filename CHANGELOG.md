@@ -3,11 +3,44 @@
 All notable changes to the AI-DLC v2 Claude Code plugin are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-This plugin packages the **v2** rewrite of [awslabs/aidlc-workflows](https://github.com/awslabs/aidlc-workflows)
-as a Claude Code plugin. Upstream releases v2 via `v2.x` tags on its `v2` branch; the plugin version
-**mirrors the adopted framework version** (plugin-only patches append `-pN`). Each release records the
-exact upstream commit it was built from in `UPSTREAM.lock` and in the release tag
-(`vX.Y.Z+up.<short-sha>`).
+This plugin sets up the **v2** release of [awslabs/aidlc-workflows](https://github.com/awslabs/aidlc-workflows)
+in Claude Code projects. The plugin version **mirrors the pinned upstream release** (plugin-only
+fixes append `-pN`). Each release records the exact upstream release it pins in `UPSTREAM.lock` and
+in the release tag (`vX.Y.Z+up.<short-sha>`).
+
+## [2.10.0] - 2026-10-02
+
+Upstream made AI-DLC v2 generally available on `main`, with its own installer, `aidlc` CLI, and
+project lifecycle (`aidlc config`, per-project pins, updates, uninstall). This release rebuilds the
+plugin on top of those official tools instead of shipping its own copy of the framework.
+
+### Changed
+- **Pins upstream v2.10.0** (commit `2a88385`), released 2026-09-24. The plugin no longer
+  bundles any upstream files.
+- `/aidlc-v2:aidlc` now previews, asks, then: installs upstream's `aidlc` CLI only if it is
+  missing (the official installer, checked against a SHA-256 pinned in the plugin; shell startup
+  files are never edited), pins the project with `aidlc config --pin` (your machine-wide CLI is
+  left alone), and configures it with `aidlc config --harness claude`. `--check` previews only;
+  `--mcp none` skips upstream's optional MCP servers.
+- Projects with existing Claude Code configuration that upstream refuses are reported as
+  conflicts with clear next steps; the plugin never uses `aidlc config --force`, which would
+  replace your `CLAUDE.md` and drop your own `permissions`.
+- Windows is supported through Claude Code's Git Bash and upstream's PowerShell installer
+  (covered by automated tests with stubs; not yet run on a real Windows machine).
+
+### Migrating from 2.1.4
+- Run `/aidlc-v2:aidlc` in each project 2.1.4 set up. It removes exactly the 2.1.4 framework
+  files you never modified, keeps your `aidlc/` workspace (method and memory files) and any file
+  you changed, undoes the `.gitignore` block 2.1.4 appended, and hands the project to upstream.
+  It first rehearses the whole migration on a scratch copy: if upstream would refuse the result
+  (for example, because 2.1.4 merged its hooks into your own `settings.json`), it stops before
+  changing anything and names the files to move aside. Old framework files you modified are kept
+  and listed. Upstream's own `aidlc config` cannot upgrade a 2.1.4 project without this step.
+- Finish or park any in-progress workflow first, and commit before migrating.
+
+### Removed
+- The bundled framework (`dist/claude/framework/`) and the plugin's own installer — upstream's
+  installer and `aidlc config` replace them. `bun` is no longer required by the plugin itself.
 
 ## [2.1.4] - 2026-07-02
 

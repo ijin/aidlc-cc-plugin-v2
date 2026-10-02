@@ -1,19 +1,11 @@
 {
   "name": "aidlc-v2",
-  "description": "AI-DLC v2 for Claude Code — installer plugin for the AI-Driven Development Lifecycle. Ships awslabs/aidlc-workflows' own Claude Code target (verbatim, at a pinned release) and installs/updates it in your project via /aidlc-v2:aidlc.",
-  "version": "2.1.4",
+  "version": "2.10.0",
+  "description": "Sets up and updates AI-DLC via upstream’s installer, pinned and verified.",
   "author": {
     "name": "ijin"
   },
   "homepage": "https://github.com/ijin/aidlc-cc-plugin-v2",
   "repository": "https://github.com/ijin/aidlc-cc-plugin-v2",
-  "license": "MIT-0",
-  "keywords": [
-    "aidlc",
-    "ai-driven",
-    "development-lifecycle",
-    "claude-code",
-    "plugin",
-    "v2"
-  ]
+  "license": "MIT-0"
 }
