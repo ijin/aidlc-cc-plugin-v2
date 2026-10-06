@@ -25,10 +25,19 @@ adaptive, agent-orchestrated software development lifecycle — in your projects
 
 ## Install & use
 
+Add the marketplace, then install the plugin — adding a marketplace only lists its plugins, it
+doesn't install them:
+
 ```
 /plugin marketplace add ijin/aidlc-cc-plugin-v2
 /plugin install aidlc-v2@aidlc-cc-plugin-v2
 ```
+
+When the install dialog asks for a scope, choose **user** (all your projects) or **local** (you,
+in this repo only). Don't choose **project** scope: it writes `.claude/settings.json`, which
+`aidlc config` also manages, so setup stops with a conflict on that file. Teammates don't need the
+plugin to use a project you've set up — they need the `aidlc` CLI on their `PATH`, and the
+committed `.aidlc-version` keeps everyone on the same version.
 
 Then, **in the project where you want AI-DLC**:
 
