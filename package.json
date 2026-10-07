@@ -1,6 +1,6 @@
 {
   "name": "aidlc-cc-plugin-v2",
-  "version": "2.10.0",
+  "version": "2.10.0-p1",
   "private": true,
   "description": "Claude Code plugin build tooling for AI-DLC v2 (alpha).",
   "license": "MIT-0",

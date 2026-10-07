@@ -11,7 +11,7 @@
       "name": "aidlc-v2",
       "source": "./dist/claude",
       "description": "Sets up and updates AI-DLC via upstream’s installer, pinned and verified.",
-      "version": "2.10.0",
+      "version": "2.10.0-p1",
       "author": {
         "name": "ijin"
       },

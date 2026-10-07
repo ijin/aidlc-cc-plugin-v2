@@ -8,6 +8,16 @@ in Claude Code projects. The plugin version **mirrors the pinned upstream releas
 fixes append `-pN`). Each release records the exact upstream release it pins in `UPSTREAM.lock` and
 in the release tag (`vX.Y.Z+up.<short-sha>`).
 
+## [2.10.0-p1] - 2026-10-07
+
+Plugin-only release; still pins upstream v2.10.0.
+
+### Changed
+- The `/aidlc-v2:aidlc` command description no longer mentions the 2.1.4 release. Projects set up
+  by plugin 2.1.4 are still migrated automatically.
+- README: separate the install step, explain plugin install scopes, and move the 2.1.4 upgrade
+  note to an appendix.
+
 ## [2.10.0] - 2026-10-02
 
 Upstream made AI-DLC v2 generally available on `main`, with its own installer, `aidlc` CLI, and

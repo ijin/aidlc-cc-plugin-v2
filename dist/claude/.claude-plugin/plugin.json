@@ -1,6 +1,6 @@
 {
   "name": "aidlc-v2",
-  "version": "2.10.0",
+  "version": "2.10.0-p1",
   "description": "Sets up and updates AI-DLC via upstream’s installer, pinned and verified.",
   "author": {
     "name": "ijin"

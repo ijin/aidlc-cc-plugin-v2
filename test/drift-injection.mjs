@@ -44,7 +44,7 @@ try {
   test('duplicate lock field',d=>change(d,'UPSTREAM.lock',s=>s+'UPSTREAM_TAG=v2.10.0\n'),/duplicate lock/);
   test('package version mismatch',d=>change(d,'package.json',s=>s.replace('2.10.0','2.9.0')),/package.json version/);
   test('marketplace version mismatch',d=>change(d,'.claude-plugin/marketplace.json',s=>s.replace('2.10.0','2.9.0')),/marketplace plugin version/);
-  const patch=fixture(); for(const rel of ['package.json','.claude-plugin/marketplace.json']) change(patch,rel,s=>s.replace('2.10.0','2.10.0-p1')); assert.equal(run(patch).status,0); count++; console.log('PASS plugin patch version');
+  const patch=fixture(); for(const rel of ['package.json','.claude-plugin/marketplace.json']) change(patch,rel,s=>s.replace(/"version": "2\.10\.0(-p\d+)?"/,'"version": "2.10.0-p7"')); assert.equal(run(patch).status,0); count++; console.log('PASS plugin patch version');
   for(const rel of [skill,helper,manifest,'targets/claude/plugin/data/legacy-2.1.4.gitignore-block']) test(`missing ${rel}`,d=>fs.unlinkSync(path.join(d,rel)),/Restore authored file/);
   test('skill name',d=>change(d,skill,s=>s.replace('name: aidlc','name: wrong')),/name: aidlc/);
   for(const mode of ['plan','apply']) test(`skill ${mode} command`,d=>change(d,skill,s=>s.replace(`aidlc-v2.sh" ${mode}`,`aidlc-v2.sh" wrong`)),new RegExp(`helper ${mode}`));

@@ -1,6 +1,6 @@
 ---
 name: aidlc
-description: Set up or update AI-DLC (AI-Driven Development Lifecycle, from awslabs/aidlc-workflows) in the current project at the version this plugin pins — installs upstream's `aidlc` CLI if missing, pins the project, migrates projects set up by this plugin's 2.1.4 release, and runs `aidlc config --harness claude`. Run once per project, and again after upgrading the plugin. Pass --check to preview without changing anything.
+description: Set up or update AI-DLC (AI-Driven Development Lifecycle, from awslabs/aidlc-workflows) in the current project at the version this plugin pins — installs upstream's `aidlc` CLI if missing, pins the project, and runs `aidlc config --harness claude`. Run once per project, and again after upgrading the plugin. Pass --check to preview without changing anything.
 argument-hint: "[--check] [--mcp defaults|none]"
 disable-model-invocation: true
 ---
