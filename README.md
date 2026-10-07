@@ -13,9 +13,6 @@ adaptive, agent-orchestrated software development lifecycle — in your projects
 >   `.claude/settings.json` or `.claude/CLAUDE.md` differ from its own — and its `--force`
 >   silently replaces your `CLAUDE.md` and drops your own `permissions`. The plugin shows the
 >   conflicts and never forces.
-> - **Projects set up by this plugin's 2.1.4 release.** Upstream's `aidlc config` cannot upgrade
->   them. The plugin removes exactly the old framework files you never modified, keeps your
->   `aidlc/` workspace and anything you changed, then hands the project to upstream.
 > - **Version pinning without side effects.** Each project is pinned to the plugin's version with
 >   upstream's own per-project pin; your machine-wide `aidlc` CLI is never re-pointed.
 >
@@ -77,9 +74,8 @@ Commit `.aidlc-version`, `.claude/`, and `aidlc/` — they are designed to be sh
 ### Conflicts
 
 If upstream reports conflicts — typically your own `.claude/settings.json` or `.claude/CLAUDE.md`
-— the plugin stops before changing your project's files (it checks with a dry run first, and for
-2.1.4 projects rehearses the whole migration on a scratch copy), and puts back the project's
-previous pin. Move the named files aside, run `/aidlc-v2:aidlc` again, and copy back anything you
+— the plugin stops before changing your project's files (it checks with a dry run first) and puts
+back the project's previous pin. Move the named files aside, run `/aidlc-v2:aidlc` again, and copy back anything you
 still need (for example, your own `permissions` entries into the new `settings.json`). The plugin
 never uses `aidlc config --force`.
 
@@ -115,7 +111,7 @@ targets/claude/
   plugin/
     skills/aidlc/SKILL.md #   the entry skill (/aidlc-v2:aidlc)
     scripts/aidlc-v2.sh   #   the helper: plan/apply (POSIX sh)
-    data/                 #   hash manifest of the 2.1.4 framework files + the .gitignore block 2.1.4 appended
+    data/                 #   legacy-migration data (see the appendix)
   sync-upstream.sh        # adopt a release tag: verify checksums + signed provenance, rewrite the lock
   tag-release.sh          # annotated release tag v<version>+up.<upstream-short-sha>
   smoke.mjs               # T2a load smoke (billable, opt-in)
@@ -156,3 +152,9 @@ hashes in [`UPSTREAM.lock`](UPSTREAM.lock). `targets/claude/plugin/data/` contai
 files upstream's v2.1.4 release shipped and a verbatim excerpt of its `.gitignore`, used only to
 migrate projects set up by this plugin's 2.1.4 release. **This is an independent community
 project, not affiliated with or endorsed by Amazon / AWS.**
+
+## Appendix: projects set up by plugin 2.1.4
+
+Run `/aidlc-v2:aidlc` as usual — it removes only the old framework files you never modified, keeps
+your `aidlc/` workspace, rehearses the change on a scratch copy first, and then hands the project
+to upstream's `aidlc config`.
